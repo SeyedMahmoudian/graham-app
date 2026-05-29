@@ -1,6 +1,0 @@
-{
-    "python.analysis.extraPaths": [
-        "./Data Layers",
-        "./Core Scoring"
-    ]
-}
