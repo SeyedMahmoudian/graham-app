@@ -6,3 +6,6 @@ __pycache__/
 yes
 yes.pub
 .cache
+assets/*.min.css
+assets/*.css
+assets/*.css.map

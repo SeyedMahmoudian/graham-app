@@ -1,11 +1,14 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Graham Score — Quant Edition
-// Theme: Bloomberg Terminal  ·  Dense · Dark · Precise · Professional
-// Font stack: DM Mono (data) + Syne (headers) — loaded via Google Fonts
-// ═══════════════════════════════════════════════════════════════════════════
 
-// ── Google Fonts ────────────────────────────────────────────────────────────
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@600;700;800&display=swap');
+
+
+// ── Additional Tokens Extracted From Hard-Coded Values ──────────────────────
+$white:                    #fff;
+$blue-light:               #82b1ff;
+$blue-dark-gradient-start: #1a2a4a;
+$blue-dark-gradient-end:   #0d1a30;
+$portfolio-surface:        #1a1d27;
+$portfolio-border:         #2a2d3e;
 
 // ── Design Tokens ───────────────────────────────────────────────────────────
 $bg:          #080b10;
@@ -206,7 +209,7 @@ html, body {
 
 .load-btn {
   @include mono(12px, 500);
-  background: linear-gradient(135deg, #1a2a4a, #0d1a30);
+  background: linear-gradient(135deg, $blue-dark-gradient-start, $blue-dark-gradient-end);
   border: 1px solid $blue-bright;
   border-radius: 4px;
   color: $blue-bright;
@@ -358,7 +361,7 @@ html, body {
   transition: color 0.15s, text-shadow 0.15s;
 
   &:hover {
-    color: #82b1ff;
+    color: $blue-light;
     text-shadow: 0 0 8px rgba($blue-bright, 0.6);
   }
 }
@@ -486,7 +489,7 @@ html, body {
   background: $blue;
   border: none;
   border-left: 1px solid $border-glow;
-  color: #fff;
+  color: $white;
   cursor: pointer;
   letter-spacing: 0.1em;
   padding: 12px 24px;
@@ -738,7 +741,7 @@ html, body {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
- 
+
   @media (max-width: 900px) {
     grid-template-columns: 1fr;
   }
@@ -873,15 +876,22 @@ html, body {
     white-space: nowrap;
 }
 .sort-header-btn:hover { color: #448aff; }
-.portfolio-add-panel { background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 12px; padding: 16px 20px; margin-top: 20px; }
+.portfolio-add-panel { background: $portfolio-surface; border: 1px solid $portfolio-border; border-radius: 12px; padding: 16px 20px; margin-top: 20px; }
 .portfolio-add-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .portfolio-add-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .portfolio-header { margin-bottom: 16px; }
 .portfolio-meta { display: flex; align-items: baseline; }
-.portfolio-stats-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; background: #1a1d27; padding: 16px; border-radius: 12px; }
+.portfolio-stats-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; background: $portfolio-surface; padding: 16px; border-radius: 12px; }
 #portfolio-sim-results{
   .dash-graph{
     width: 100%;
     max-width: 100%;
   }
+}
+.infolayer{
+  .scrollbox {
+    position: absolute;
+
+    transform: translate(67%, 0px);
+}
 }
