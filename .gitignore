@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .env
 .venv/
+.vscode
+yes
+yes.pub
+.cache

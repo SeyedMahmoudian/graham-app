@@ -873,3 +873,15 @@ html, body {
     white-space: nowrap;
 }
 .sort-header-btn:hover { color: #448aff; }
+.portfolio-add-panel { background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 12px; padding: 16px 20px; margin-top: 20px; }
+.portfolio-add-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.portfolio-add-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.portfolio-header { margin-bottom: 16px; }
+.portfolio-meta { display: flex; align-items: baseline; }
+.portfolio-stats-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; background: #1a1d27; padding: 16px; border-radius: 12px; }
+#portfolio-sim-results{
+  .dash-graph{
+    width: 100%;
+    max-width: 100%;
+  }
+}

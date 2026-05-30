@@ -21,6 +21,7 @@ import scorer
 import screener
 import universe
 import alpha_vantage_client
+import portfolio as portfolio_engine
 
 # ── App Init ──────────────────────────────────────────────────────────────────
 
@@ -143,8 +144,9 @@ app.layout = html.Div(className="app-container", children=[
 
     # Tabs
     html.Div(className="tab-bar", children=[
-        html.Button("📊 Screener", id="tab-screener-btn", className="tab-btn active"),
-        html.Button("🔍 Analyze", id="tab-analyze-btn", className="tab-btn"),
+        html.Button("📊 Screener",  id="tab-screener-btn",  className="tab-btn active"),
+        html.Button("🔍 Analyze",   id="tab-analyze-btn",   className="tab-btn"),
+        html.Button("💼 Portfolios", id="tab-portfolio-btn", className="tab-btn"),
     ]),
 
     # ── Tab: Screener ────────────────────────────────────────────────────────
@@ -221,6 +223,103 @@ app.layout = html.Div(className="app-container", children=[
                 html.Div(id="analysis-content", children=[])
             ]
         ),
+
+        # ── Add to Portfolio panel (shown after analysis completes) ──────────
+        html.Div(id="add-to-portfolio-panel", style={"display": "none"}, children=[
+            html.Div(className="portfolio-add-panel", children=[
+                html.Div(className="portfolio-add-header", children=[
+                    html.Span("💼", style={"fontSize": "20px"}),
+                    html.Span("Add to Portfolio", style={"fontWeight": "600", "fontSize": "16px"}),
+                ]),
+                html.Div(className="portfolio-add-controls", children=[
+                    dcc.Dropdown(
+                        id="portfolio-select-dropdown",
+                        placeholder="Select or create portfolio…",
+                        clearable=True,
+                        style={"minWidth": "220px", "color": "#000"},
+                    ),
+                    dcc.Input(
+                        id="portfolio-new-name",
+                        type="text",
+                        placeholder="Or type new portfolio name…",
+                        className="ticker-input",
+                        style={"maxWidth": "220px"},
+                    ),
+                    dcc.Input(
+                        id="portfolio-shares-input",
+                        type="number",
+                        placeholder="Shares (min 5)",
+                        min=5,
+                        step=1,
+                        className="ticker-input",
+                        style={"maxWidth": "130px"},
+                    ),
+                    html.Button("Add", id="portfolio-add-btn", className="analyze-btn", n_clicks=0),
+                ]),
+                html.Div(id="portfolio-add-msg", style={"fontSize": "13px", "marginTop": "6px"}),
+            ])
+        ]),
+    ], style={"display": "none"}),
+
+    # ── Tab: Portfolios ──────────────────────────────────────────────────────
+    html.Div(id="tab-portfolio", className="main-content", children=[
+
+        # Top toolbar: portfolio switcher + create + compare
+        html.Div(className="screener-toolbar", children=[
+            html.Div(className="screener-controls", children=[
+                dcc.Dropdown(
+                    id="portfolio-active-dropdown",
+                    placeholder="Select a portfolio…",
+                    clearable=False,
+                    style={"minWidth": "240px", "color": "#000"},
+                ),
+                html.Button("＋ New Portfolio", id="portfolio-new-btn",
+                            className="load-btn", n_clicks=0),
+                html.Button("🗑 Delete", id="portfolio-delete-btn",
+                            className="load-btn",
+                            style={"background": "#2a1a1a", "borderColor": "#ff1744"},
+                            n_clicks=0),
+            ]),
+            html.Div(className="screener-controls", children=[
+                html.Label("Compare:", style={"fontSize": "13px", "color": "#9e9e9e"}),
+                dcc.Dropdown(
+                    id="portfolio-compare-dropdown",
+                    placeholder="Add portfolio to compare…",
+                    clearable=True,
+                    style={"minWidth": "200px", "color": "#000"},
+                ),
+            ]),
+        ]),
+
+        # New portfolio name modal (inline, hidden by default)
+        html.Div(id="portfolio-create-panel", style={"display": "none"}, children=[
+            html.Div(className="portfolio-add-panel", children=[
+                html.Span("Name your portfolio:", style={"color": "#e0e0e0"}),
+                dcc.Input(id="portfolio-create-name", type="text",
+                          placeholder="e.g. Value Picks Q1",
+                          className="ticker-input", style={"maxWidth": "240px"}),
+                html.Button("Create", id="portfolio-create-confirm-btn",
+                            className="analyze-btn", n_clicks=0),
+                html.Button("Cancel", id="portfolio-create-cancel-btn",
+                            className="load-btn", n_clicks=0),
+                html.Div(id="portfolio-create-msg",
+                         style={"fontSize": "13px", "color": "#ff1744"}),
+            ])
+        ]),
+
+        html.Div(id="portfolio-msg", style={"fontSize": "13px", "padding": "4px 0 8px"}),
+
+        # Main portfolio content (holdings + run sim button)
+        dcc.Loading(type="default", color="#448aff", children=[
+            html.Div(id="portfolio-content", children=[
+                html.Div("Select or create a portfolio to get started.",
+                         style={"textAlign": "center", "padding": "60px", "color": "#9e9e9e"})
+            ])
+        ]),
+
+        # Simulation results (charts)
+        html.Div(id="portfolio-sim-results", children=[]),
+
     ], style={"display": "none"}),
 
     # Stores
@@ -229,6 +328,8 @@ app.layout = html.Div(className="app-container", children=[
     dcc.Store(id="screener-sort-store", data={"col": "composite_score", "asc": False}),
     dcc.Store(id="search-history-store"),
     dcc.Store(id="screener-click-ticker"),   # symbol clicked in screener table
+    dcc.Store(id="portfolio-refresh-store", data=0),  # increment to trigger refresh
+    dcc.Store(id="active-analysis-symbol"),           # symbol currently analyzed
     # interval disabled=True once loading finishes to stop constant re-renders
     dcc.Interval(id="screener-progress-interval", interval=2000, disabled=True),
     dcc.Loading(id="loading", type="circle", color=BLUE, children=html.Div(id="loading-trigger"))
@@ -238,39 +339,31 @@ app.layout = html.Div(className="app-container", children=[
 # ── Tab Navigation ───────────────────────────────────────────────────────────
 
 @callback(
-    Output("tab-screener", "style"),
-    Output("tab-analyze", "style"),
+    Output("tab-screener",     "style"),
+    Output("tab-analyze",      "style"),
+    Output("tab-portfolio",    "style"),
     Output("tab-screener-btn", "className"),
-    Output("tab-analyze-btn", "className"),
-    Input("tab-screener-btn", "n_clicks"),
-    Input("tab-analyze-btn", "n_clicks"),
-    Input("screener-click-ticker", "data"),
+    Output("tab-analyze-btn",  "className"),
+    Output("tab-portfolio-btn","className"),
+    Input("tab-screener-btn",     "n_clicks"),
+    Input("tab-analyze-btn",      "n_clicks"),
+    Input("tab-portfolio-btn",    "n_clicks"),
+    Input("screener-click-ticker","data"),
     prevent_initial_call=False
 )
-def switch_tabs(n_screener, n_analyze, clicked_ticker):
+def switch_tabs(n_screener, n_analyze, n_portfolio, clicked_ticker):
     triggered = dash.ctx.triggered_id
-    # A ticker click always opens the Analyze tab
+    SHOW, HIDE = {"display": "block"}, {"display": "none"}
+    ACTIVE, IDLE = "tab-btn active", "tab-btn"
+
     if triggered == "screener-click-ticker" and clicked_ticker:
-        return (
-            {"display": "none"},
-            {"display": "block"},
-            "tab-btn",
-            "tab-btn active"
-        )
+        return HIDE, SHOW, HIDE, IDLE, ACTIVE, IDLE
     if triggered == "tab-analyze-btn":
-        return (
-            {"display": "none"},
-            {"display": "block"},
-            "tab-btn",
-            "tab-btn active"
-        )
-    # Default: screener tab
-    return (
-        {"display": "block"},
-        {"display": "none"},
-        "tab-btn active",
-        "tab-btn"
-    )
+        return HIDE, SHOW, HIDE, IDLE, ACTIVE, IDLE
+    if triggered == "tab-portfolio-btn":
+        return HIDE, HIDE, SHOW, IDLE, IDLE, ACTIVE
+    # Default: screener
+    return SHOW, HIDE, HIDE, ACTIVE, IDLE, IDLE
 
 
 # ── Screener ticker-click → store ─────────────────────────────────────────────
@@ -621,12 +714,14 @@ def _build_analysis_content(data: dict) -> list:
 
 
 @callback(
-    Output("analysis-content", "children"),   # ← dcc.Loading wraps this; spinner fires immediately
-    Output("analysis-store",   "data"),
-    Output("status-msg",       "children"),
-    Output("analyze-btn",      "disabled"),
-    Output("ticker-input",     "disabled"),
-    Output("ticker-input",     "value"),
+    Output("analysis-content",        "children"),
+    Output("analysis-store",          "data"),
+    Output("status-msg",              "children"),
+    Output("analyze-btn",             "disabled"),
+    Output("ticker-input",            "disabled"),
+    Output("ticker-input",            "value"),
+    Output("add-to-portfolio-panel",  "style"),
+    Output("active-analysis-symbol",  "data"),
     Input("analyze-btn",          "n_clicks"),
     Input("screener-click-ticker","data"),
     State("ticker-input",         "value"),
@@ -636,8 +731,7 @@ def run_analysis(n_clicks, clicked_ticker, ticker_input_value):
     """
     Single callback: fetch + score + render.
     Because analysis-content is a child of dcc.Loading(id='analysis-loading'),
-    Dash shows the spinner for the entire duration of this callback — including
-    all blocking network calls — so the UI never appears frozen.
+    Dash shows the spinner for the entire duration of this callback.
     """
     triggered = dash.ctx.triggered_id
 
@@ -647,13 +741,13 @@ def run_analysis(n_clicks, clicked_ticker, ticker_input_value):
         ticker = ticker_input_value
 
     if not ticker or not ticker.strip():
-        return [], None, "❌ Please enter a ticker symbol.", False, False, dash.no_update
+        return [], None, "❌ Please enter a ticker symbol.", False, False, dash.no_update, {"display": "none"}, None
 
     symbol = ticker.strip().upper()
     result = analyze_stock(symbol)
 
     if "error" in result:
-        return [], None, f"❌ {result['error']}", False, False, symbol
+        return [], None, f"❌ {result['error']}", False, False, symbol, {"display": "none"}, None
 
     content = _build_analysis_content(result)
     return (
@@ -661,6 +755,8 @@ def run_analysis(n_clicks, clicked_ticker, ticker_input_value):
         result,
         f"✅ {result['name']} ({symbol}) — Analysis complete",
         False, False, symbol,
+        {"display": "block"},   # show add-to-portfolio panel
+        symbol,
     )
 
 
@@ -846,18 +942,551 @@ def _graham_details_card(data: dict) -> html.Div:
     ])
 
 
-def _chart_layout(title: str) -> dict:
+def _chart_layout(title: str, many_traces: bool = False) -> dict:
+    """
+    many_traces=True: vertical legend anchored top-right outside the plot.
+    Used for portfolio charts which have 4-6 traces and would otherwise
+    collide with the title.
+    """
+    if many_traces:
+        legend = dict(
+            bgcolor="rgba(26,29,39,0.88)",
+            bordercolor=BORDER,
+            borderwidth=1,
+            font=dict(size=11),
+            orientation="v",
+            x=1.01,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+        )
+        margin = dict(l=16, r=160, t=44, b=16)   # right margin makes room
+    else:
+        legend = dict(
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(size=11),
+            orientation="h",
+            x=0,
+            y=1.08,
+            xanchor="left",
+            yanchor="bottom",
+        )
+        margin = dict(l=16, r=16, t=44, b=16)
+
     return dict(
         title=dict(text=title, font=dict(size=13, color=MUTED), x=0),
         paper_bgcolor=CARD,
         plot_bgcolor=CARD,
         font=dict(color=TEXT, family="Inter, system-ui, sans-serif"),
-        margin=dict(l=16, r=16, t=40, b=16),
+        margin=margin,
         xaxis=dict(showgrid=False, zeroline=False),
         yaxis=dict(gridcolor=BORDER, zeroline=False),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11),
-                   orientation="h", x=0, y=1.1)
+        legend=legend,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Portfolio callbacks
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Populate portfolio dropdowns ──────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-select-dropdown", "options"),
+    Output("portfolio-active-dropdown", "options"),
+    Output("portfolio-compare-dropdown","options"),
+    Input("portfolio-refresh-store", "data"),
+    prevent_initial_call=False
+)
+def refresh_portfolio_dropdowns(refresh):
+    names = portfolio_engine.list_portfolios()
+    opts  = [{"label": n, "value": n} for n in names]
+    return opts, opts, opts
+
+
+# ── Show/hide new-portfolio creation panel ────────────────────────────────────
+
+@callback(
+    Output("portfolio-create-panel", "style"),
+    Input("portfolio-new-btn",            "n_clicks"),
+    Input("portfolio-create-confirm-btn", "n_clicks"),
+    Input("portfolio-create-cancel-btn",  "n_clicks"),
+    prevent_initial_call=True
+)
+def toggle_create_panel(new, confirm, cancel):
+    triggered = dash.ctx.triggered_id
+    if triggered == "portfolio-new-btn":
+        return {"display": "block"}
+    return {"display": "none"}
+
+
+# ── Create portfolio ──────────────────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-refresh-store",    "data", allow_duplicate=True),
+    Output("portfolio-active-dropdown",  "value"),
+    Output("portfolio-create-msg",       "children"),
+    Output("portfolio-create-name",      "value"),
+    Input("portfolio-create-confirm-btn","n_clicks"),
+    State("portfolio-create-name",       "value"),
+    State("portfolio-refresh-store",     "data"),
+    prevent_initial_call=True
+)
+def create_portfolio(n, name, refresh):
+    if not n:
+        return dash.no_update, dash.no_update, "", ""
+    name = (name or "").strip()
+    if not name:
+        return dash.no_update, dash.no_update, "❌ Please enter a name.", dash.no_update
+    existing = portfolio_engine.list_portfolios()
+    if name in existing:
+        return dash.no_update, dash.no_update, f"❌ '{name}' already exists.", dash.no_update
+    portfolio_engine.create_portfolio(name)
+    return (refresh or 0) + 1, name, "", ""
+
+
+# ── Delete portfolio ──────────────────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-refresh-store",   "data", allow_duplicate=True),
+    Output("portfolio-active-dropdown", "value", allow_duplicate=True),
+    Output("portfolio-msg",             "children", allow_duplicate=True),
+    Input("portfolio-delete-btn",       "n_clicks"),
+    State("portfolio-active-dropdown",  "value"),
+    State("portfolio-refresh-store",    "data"),
+    prevent_initial_call=True
+)
+def delete_portfolio(n, active, refresh):
+    if not n or not active:
+        return dash.no_update, dash.no_update, dash.no_update
+    portfolio_engine.delete_portfolio(active)
+    return (refresh or 0) + 1, None, f"🗑 Portfolio '{active}' deleted."
+
+
+# ── Add holding from Analyze tab ──────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-add-msg",       "children"),
+    Output("portfolio-add-msg",       "style"),
+    Output("portfolio-refresh-store", "data", allow_duplicate=True),
+    Output("portfolio-shares-input",  "value"),
+    Input("portfolio-add-btn",        "n_clicks"),
+    State("portfolio-select-dropdown","value"),
+    State("portfolio-new-name",       "value"),
+    State("portfolio-shares-input",   "value"),
+    State("active-analysis-symbol",   "data"),
+    State("analysis-store",           "data"),
+    State("portfolio-refresh-store",  "data"),
+    prevent_initial_call=True
+)
+def add_to_portfolio(n, selected, new_name, shares, symbol, analysis, refresh):
+    if not n:
+        return "", {}, dash.no_update, dash.no_update
+
+    # Resolve portfolio name
+    port_name = (new_name or "").strip() or selected
+    if not port_name:
+        return "❌ Select or name a portfolio first.", {"color": RED}, dash.no_update, dash.no_update
+
+    # Shares validation
+    try:
+        shares = int(shares or 0)
+    except (ValueError, TypeError):
+        shares = 0
+    if shares < 5:
+        return "❌ Minimum 5 shares.", {"color": RED}, dash.no_update, dash.no_update
+
+    if not symbol:
+        return "❌ Analyze a stock first.", {"color": RED}, dash.no_update, dash.no_update
+
+    # Create portfolio if it doesn't exist
+    if port_name not in portfolio_engine.list_portfolios():
+        portfolio_engine.create_portfolio(port_name)
+
+    price       = (analysis or {}).get("price") or 0
+    company     = (analysis or {}).get("name", symbol)
+    _, err = portfolio_engine.add_holding(port_name, symbol, shares, price, company)
+
+    if err:
+        return f"❌ {err}", {"color": RED}, dash.no_update, dash.no_update
+
+    portfolio_engine.invalidate_simulation_cache(port_name)
+    p = portfolio_engine.load_portfolio(port_name)
+    count = len(p["holdings"])
+    msg = f"✅ Added {shares}× {symbol} to '{port_name}' ({count}/{portfolio_engine.MAX_HOLDINGS} stocks)"
+    return msg, {"color": GREEN}, (refresh or 0) + 1, None
+
+
+# ── Render active portfolio holdings ─────────────────────────────────────────
+
+@callback(
+    Output("portfolio-content", "children"),
+    Input("portfolio-active-dropdown", "value"),
+    Input("portfolio-refresh-store",   "data"),
+    prevent_initial_call=False
+)
+def render_portfolio_holdings(active, refresh):
+    if not active:
+        return html.Div("Select or create a portfolio to get started.",
+                        style={"textAlign": "center", "padding": "60px", "color": MUTED})
+
+    p = portfolio_engine.load_portfolio(active)
+    if p is None:
+        return html.Div("Portfolio not found.", style={"color": RED})
+
+    holdings = p.get("holdings", {})
+    count    = len(holdings)
+    cap      = portfolio_engine.MAX_HOLDINGS
+
+    header = html.Div(className="portfolio-header", children=[
+        html.Div(className="portfolio-meta", children=[
+            html.Span(active, style={"fontSize": "20px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{count}/{cap} stocks",
+                      style={"fontSize": "13px", "color": MUTED, "marginLeft": "12px"}),
+        ]),
+    ])
+
+    if not holdings:
+        body = html.Div("No holdings yet. Analyze a stock and click 'Add to Portfolio'.",
+                        style={"padding": "30px", "color": MUTED, "textAlign": "center"})
+    else:
+        total_invested = sum(h["shares"] * h["price_at_add"] for h in holdings.values())
+
+        rows = []
+        for sym, h in holdings.items():
+            invested = h["shares"] * h["price_at_add"]
+            weight   = invested / total_invested * 100 if total_invested > 0 else 0
+            rows.append(html.Tr([
+                html.Td(sym, style={"fontWeight": "600", "color": BLUE}),
+                html.Td(h["name"][:28], style={"fontSize": "12px", "color": MUTED}),
+                # Editable shares cell
+                html.Td(
+                    html.Div(style={"display": "flex", "alignItems": "center", "gap": "6px"}, children=[
+                        dcc.Input(
+                            id={"type": "shares-edit-input", "index": f"{active}|{sym}"},
+                            type="number",
+                            value=h["shares"],
+                            min=5,
+                            step=1,
+                            debounce=False,
+                            style={
+                                "width": "70px", "padding": "3px 6px",
+                                "background": DARK, "border": f"1px solid {BORDER}",
+                                "borderRadius": "6px", "color": TEXT, "fontSize": "13px",
+                            }
+                        ),
+                        html.Button(
+                            "✓",
+                            id={"type": "shares-save-btn", "index": f"{active}|{sym}"},
+                            n_clicks=0,
+                            style={
+                                "background": "none", "border": f"1px solid {BORDER}",
+                                "borderRadius": "5px", "color": GREEN,
+                                "cursor": "pointer", "fontSize": "13px",
+                                "padding": "2px 7px", "lineHeight": "1",
+                            }
+                        ),
+                    ])
+                ),
+                html.Td(f"${h['price_at_add']:.2f}" if h["price_at_add"] else "N/A"),
+                html.Td(f"${invested:,.2f}", id={"type": "invested-cell", "index": f"{active}|{sym}"}),
+                html.Td(f"{weight:.1f}%"),
+                html.Td(
+                    html.Button("✕", n_clicks=0,
+                                id={"type": "remove-holding-btn", "index": f"{active}|{sym}"},
+                                style={"background": "none", "border": "none",
+                                       "color": RED, "cursor": "pointer", "fontSize": "14px"})
+                ),
+            ]))
+
+        table = html.Table(className="screener-table", children=[
+            html.Thead(html.Tr([
+                html.Th("Ticker"), html.Th("Company"), html.Th("Shares"),
+                html.Th("Price Added"), html.Th("Invested"), html.Th("Weight"), html.Th(""),
+            ])),
+            html.Tbody(rows),
+        ])
+
+        total_row = html.Div(
+            f"Total invested: ${total_invested:,.2f}",
+            style={"textAlign": "right", "fontSize": "14px",
+                   "fontWeight": "600", "color": TEXT, "padding": "8px 4px"}
+        )
+
+        ready = count >= 10
+        sim_btn = html.Button(
+            f"🚀 Run Simulation ({count}/10 stocks)" if not ready else "🚀 Run Simulation",
+            id="run-simulation-btn",
+            className="analyze-btn",
+            n_clicks=0,
+            disabled=(count == 0),
+            style={"marginTop": "16px",
+                   "background": GREEN if ready else AMBER,
+                   "opacity": "1" if count > 0 else "0.5"},
+        )
+
+        body = html.Div([table, total_row, sim_btn])
+
+    return html.Div([header, body])
+
+
+# ── Remove holding ────────────────────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-refresh-store", "data", allow_duplicate=True),
+    Input({"type": "remove-holding-btn", "index": dash.ALL}, "n_clicks"),
+    State("portfolio-refresh-store", "data"),
+    prevent_initial_call=True
+)
+def remove_holding(n_clicks_list, refresh):
+    triggered = dash.ctx.triggered_id
+    if not triggered or not any(n for n in n_clicks_list if n):
+        return dash.no_update
+    port_name, symbol = triggered["index"].split("|", 1)
+    portfolio_engine.remove_holding(port_name, symbol)
+    portfolio_engine.invalidate_simulation_cache(port_name)
+    return (refresh or 0) + 1
+
+
+# ── Update shares ─────────────────────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-refresh-store", "data", allow_duplicate=True),
+    Output("portfolio-msg",           "children", allow_duplicate=True),
+    Input({"type": "shares-save-btn", "index": dash.ALL}, "n_clicks"),
+    State({"type": "shares-edit-input", "index": dash.ALL}, "value"),
+    State({"type": "shares-edit-input", "index": dash.ALL}, "id"),
+    State("portfolio-refresh-store", "data"),
+    prevent_initial_call=True
+)
+def update_shares(n_clicks_list, values, ids, refresh):
+    triggered = dash.ctx.triggered_id
+    if not triggered or not any(n for n in n_clicks_list if n):
+        return dash.no_update, dash.no_update
+
+    # Find the matching input value by aligning triggered index with ids list
+    triggered_index = triggered["index"]
+    new_shares = None
+    for id_dict, val in zip(ids, values):
+        if id_dict["index"] == triggered_index:
+            new_shares = val
+            break
+
+    if new_shares is None:
+        return dash.no_update, "❌ Could not read share count."
+
+    try:
+        new_shares = int(new_shares)
+    except (ValueError, TypeError):
+        return dash.no_update, "❌ Shares must be a whole number."
+
+    if new_shares < portfolio_engine.MIN_SHARES:
+        return dash.no_update, f"❌ Minimum {portfolio_engine.MIN_SHARES} shares."
+
+    port_name, symbol = triggered_index.split("|", 1)
+    p = portfolio_engine.load_portfolio(port_name)
+    if p is None:
+        return dash.no_update, f"❌ Portfolio '{port_name}' not found."
+
+    if symbol not in p["holdings"]:
+        return dash.no_update, f"❌ {symbol} not in portfolio."
+
+    old_shares = p["holdings"][symbol]["shares"]
+    if new_shares == old_shares:
+        return dash.no_update, f"ℹ️ {symbol} shares unchanged ({old_shares})."
+
+    p["holdings"][symbol]["shares"] = new_shares
+    portfolio_engine.save_portfolio(p)
+    portfolio_engine.invalidate_simulation_cache(port_name)
+
+    return (refresh or 0) + 1, f"✅ {symbol} updated to {new_shares} shares."
+
+
+# ── Run simulation ────────────────────────────────────────────────────────────
+
+@callback(
+    Output("portfolio-sim-results", "children"),
+    Input("run-simulation-btn",        "n_clicks"),
+    State("portfolio-active-dropdown", "value"),
+    State("portfolio-compare-dropdown","value"),
+    prevent_initial_call=True
+)
+def run_simulation(n, active, compare):
+    if not n or not active:
+        return []
+
+    def _build_sim_charts(port_name: str, color: str) -> list:
+        sim = portfolio_engine.run_simulation(port_name)
+        if sim.get("error"):
+            return [html.Div(f"❌ {sim['error']}", style={"color": RED})]
+
+        bt = sim["backtest"]
+        mc = sim["montecarlo"]
+        components = []
+
+        # ── Summary stats row ──────────────────────────────────────────────
+        def _delta(val, ref):
+            d = val - ref
+            c = GREEN if d >= 0 else RED
+            sign = "+" if d >= 0 else ""
+            return html.Span(f" ({sign}${d:,.0f})", style={"color": c, "fontSize": "12px"})
+
+        if not bt.get("error"):
+            components.append(html.Div(className="portfolio-stats-row", children=[
+                html.Div(className="stat-item", children=[
+                    html.Div("Invested", className="stat-label"),
+                    html.Div(f"${bt['total_invested']:,.2f}", className="stat-value"),
+                ]),
+                html.Div(className="stat-item", children=[
+                    html.Div("Portfolio Value", className="stat-label"),
+                    html.Div([
+                        html.Span(f"${bt['final_value']:,.2f}", className="stat-value"),
+                        _delta(bt["final_value"], bt["total_invested"]),
+                    ]),
+                ]),
+                html.Div(className="stat-item", children=[
+                    html.Div("SPY (same $)", className="stat-label"),
+                    html.Div([
+                        html.Span(f"${bt['final_spy']:,.2f}", className="stat-value"),
+                        _delta(bt["final_spy"], bt["spy_invested"]),
+                    ]),
+                ]),
+                html.Div(className="stat-item", children=[
+                    html.Div("Portfolio CAGR", className="stat-label"),
+                    html.Div(f"{bt['cagr']:+.1f}%", className="stat-value",
+                             style={"color": GREEN if bt["cagr"] > 0 else RED}),
+                ]),
+                html.Div(className="stat-item", children=[
+                    html.Div("SPY CAGR", className="stat-label"),
+                    html.Div(f"{bt['spy_cagr']:+.1f}%", className="stat-value",
+                             style={"color": GREEN if bt["spy_cagr"] > 0 else RED}),
+                ]),
+                html.Div(className="stat-item", children=[
+                    html.Div("vs SPY", className="stat-label"),
+                    html.Div(f"{bt['cagr'] - bt['spy_cagr']:+.1f}% / yr", className="stat-value",
+                             style={"color": GREEN if bt["cagr"] > bt["spy_cagr"] else RED}),
+                ]),
+            ]))
+
+        # ── Backtest chart ─────────────────────────────────────────────────
+        if not bt.get("error"):
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Scatter(
+                x=bt["dates"], y=bt["portfolio_value"],
+                name=port_name, line=dict(color=color, width=2.5)
+            ))
+            fig_bt.add_trace(go.Scatter(
+                x=bt["dates"], y=bt["spy_value"],
+                name="SPY", line=dict(color=MUTED, width=1.5, dash="dot")
+            ))
+            fig_bt.update_layout(**_chart_layout(f"{port_name} — 10yr Backtest vs SPY (actual $)", many_traces=True))
+            fig_bt.update_yaxes(title_text="Portfolio Value ($)", tickprefix="$")
+            components.append(dcc.Graph(figure=fig_bt, config={"displayModeBar": False}))
+
+        # ── Monte Carlo chart ──────────────────────────────────────────────
+        if not mc.get("error"):
+            fig_mc = go.Figure()
+
+            # SPY band (grey)
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"] + mc["dates"][::-1],
+                y=mc["spy_p90"] + mc["spy_p10"][::-1],
+                fill="toself", fillcolor="rgba(158,158,158,0.12)",
+                line=dict(color="rgba(0,0,0,0)"), name="SPY range", showlegend=True,
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"], y=mc["spy_p50"],
+                name="SPY median", line=dict(color=MUTED, width=1.5, dash="dot")
+            ))
+
+            # Portfolio band (colour)
+            r, g_c, b = int(color[1:3],16), int(color[3:5],16), int(color[5:7],16)
+            fill_rgba = f"rgba({r},{g_c},{b},0.15)"
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"] + mc["dates"][::-1],
+                y=mc["p90"] + mc["p10"][::-1],
+                fill="toself", fillcolor=fill_rgba,
+                line=dict(color="rgba(0,0,0,0)"), name=f"{port_name} range",
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"], y=mc["p50"],
+                name=f"{port_name} median", line=dict(color=color, width=2.5)
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"], y=mc["p10"],
+                name="Worst case (p10)", line=dict(color=color, width=1, dash="dash")
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"], y=mc["p90"],
+                name="Best case (p90)", line=dict(color=color, width=1, dash="dash")
+            ))
+
+            fig_mc.update_layout(**_chart_layout(
+                f"{port_name} — 2yr Monte Carlo Projection (1,000 paths)", many_traces=True
+            ))
+            fig_mc.update_yaxes(title_text="Projected Value ($)", tickprefix="$")
+            components.append(dcc.Graph(figure=fig_mc, config={"displayModeBar": False}))
+
+        # ── Holdings detail table ──────────────────────────────────────────
+        if not bt.get("error") and bt.get("holdings_detail"):
+            detail_rows = []
+            for sym, d in bt["holdings_detail"].items():
+                gain_color = GREEN if d["gain_pct"] >= 0 else RED
+
+                # Build shares cell — show split badge when a forward split occurred
+                factor = d.get("split_factor", 1.0)
+                orig   = d.get("original_shares", d["shares"])
+                if factor and factor != 1.0 and orig:
+                    split_label = f"÷{1/factor:.0f}" if factor < 1 else f"×{factor:.4g}"
+                    shares_cell = html.Td([
+                        str(d["shares"]),
+                        html.Span(
+                            f" (split {split_label})",
+                            style={"fontSize": "11px", "color": AMBER, "marginLeft": "4px"}
+                        ),
+                    ])
+                else:
+                    shares_cell = html.Td(str(d["shares"]))
+
+                detail_rows.append(html.Tr([
+                    html.Td(sym, style={"fontWeight": "600", "color": BLUE}),
+                    shares_cell,
+                    html.Td(f"${d['entry_price']:.2f}"),
+                    html.Td(f"${d['current_price']:.2f}"),
+                    html.Td(f"${d['current_value']:,.2f}"),
+                    html.Td(f"{d['gain_pct']:+.1f}%", style={"color": gain_color}),
+                ]))
+            components.append(html.Div(className="scorecard", children=[
+                html.Div("Holdings Performance (10yr backtest period)", className="scorecard-header"),
+                html.Table(className="screener-table", children=[
+                    html.Thead(html.Tr([
+                        html.Th("Ticker"), html.Th("Shares"),
+                        html.Th("Entry Price"), html.Th("Exit Price"),
+                        html.Th("Value"), html.Th("Total Return"),
+                    ])),
+                    html.Tbody(detail_rows),
+                ]),
+            ]))
+
+        return components
+
+    PALETTE = [BLUE, GREEN, AMBER, "#e040fb", "#00bcd4"]
+
+    sections = [
+        html.Div(f"📊 {active}", className="scorecard-header",
+                 style={"marginTop": "24px", "fontSize": "16px"}),
+        *_build_sim_charts(active, PALETTE[0]),
+    ]
+
+    if compare and compare != active:
+        sections += [
+            html.Div(f"📊 {compare} (comparison)",
+                     className="scorecard-header",
+                     style={"marginTop": "32px", "fontSize": "16px", "color": PALETTE[1]}),
+            *_build_sim_charts(compare, PALETTE[1]),
+        ]
+
+    return sections
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────

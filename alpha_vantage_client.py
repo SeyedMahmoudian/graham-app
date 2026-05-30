@@ -264,3 +264,91 @@ def get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
         write("hist", symbol, df.to_dict("records"))
 
     return df
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Split history
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fh_get_splits(symbol: str) -> list[dict]:
+    """
+    Fetch full split history from Finnhub SDK.
+    Returns [{"date": "YYYY-MM-DD", "ratio": float}, ...] oldest-first.
+      ratio > 1.0  →  forward split  (e.g. 20.0 = 20-for-1: shares multiply by 20)
+      ratio < 1.0  →  reverse split  (e.g. 0.1  = 1-for-10: shares divide by 10)
+    """
+    if not _fh_client:
+        return []
+    try:
+        today = time.strftime("%Y-%m-%d")
+        _fh_rate_limit()
+        result = _fh_client.stock_splits(symbol.upper(), _from="2000-01-01", to=today)
+        splits = []
+        for item in result.get("data") or []:
+            from_f = float(item.get("fromFactor", 1) or 1)
+            to_f   = float(item.get("toFactor",   1) or 1)
+            if from_f > 0 and to_f > 0 and abs(to_f / from_f - 1.0) > 0.001:
+                splits.append({
+                    "date":  item["date"],             # "YYYY-MM-DD"
+                    "ratio": round(to_f / from_f, 6),  # e.g. 20.0 for 20:1 split
+                })
+        return sorted(splits, key=lambda x: x["date"])
+    except Exception as e:
+        print(f"  [Finnhub SDK] splits error for {symbol}: {e}")
+        return []
+
+
+def _av_get_splits(symbol: str) -> list[dict]:
+    """
+    Alpha Vantage fallback: detect splits from TIME_SERIES_MONTHLY_ADJUSTED
+    via the '8. split coefficient' field.  Values != 1.0 mean a split occurred
+    in that month.  Date is approximate (last trading day of the split month).
+    """
+    data = _av_get({
+        "function": "TIME_SERIES_MONTHLY_ADJUSTED",
+        "symbol":   symbol.upper(),
+        "apikey":   AV_API_KEY,
+    })
+    if not data:
+        return []
+    ts = data.get("Monthly Adjusted Time Series", {})
+    splits = []
+    for date_str, vals in ts.items():
+        try:
+            coeff = float(vals.get("8. split coefficient", 1) or 1)
+            if abs(coeff - 1.0) > 0.001:
+                splits.append({"date": date_str, "ratio": round(coeff, 6)})
+        except (ValueError, TypeError):
+            continue
+    return sorted(splits, key=lambda x: x["date"])
+
+
+def get_splits(symbol: str) -> list[dict]:
+    """
+    Full split history for a symbol, sorted oldest-first.
+    Each item: {"date": "YYYY-MM-DD", "ratio": float}
+      ratio > 1.0  →  forward split  (share count multiplied by ratio)
+      ratio < 1.0  →  reverse split  (share count divided by 1/ratio)
+
+    Finnhub primary, Alpha Vantage fallback.
+    Cached for 6 months — splits are rare; clear cache manually after a split
+    if needed before the next natural expiry.
+    """
+    symbol = symbol.upper().strip()
+
+    cached = read("splits", symbol)
+    if cached is not None:
+        return cached
+
+    splits = []
+
+    if _fh_client:
+        print(f"  [Finnhub] fetching split history for {symbol}...")
+        splits = _fh_get_splits(symbol)
+
+    if not splits:
+        print(f"  [AlphaVantage] fetching split history for {symbol}...")
+        splits = _av_get_splits(symbol)
+
+    write("splits", symbol, splits)
+    return splits
