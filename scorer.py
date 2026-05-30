@@ -101,3 +101,136 @@ def fundamental_only(graham_result: dict, quality_result: dict) -> dict:
         "verdict_desc":     "Momentum not yet loaded",
         "value_trap_warning": False,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Enhanced composite  (6-factor model)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Weight breakdown (sums to 1.0):
+#   Graham     0.25   Valuation anchor (price vs intrinsic value)
+#   Quality    0.22   Business quality (ROE, margins, FCF, revenue growth)
+#   Momentum   0.18   Price trend confirmation (moving avg, RS, drawdown)
+#   Piotroski  0.18   Accounting health (9-point signal; prevents value traps)
+#   Risk       0.10   Risk-adjusted profile (Sharpe, beta, drawdown, vol)
+#   Altman     0.07   Bankruptcy risk filter (directly encoded as safety cap)
+#
+# Altman also acts as a HARD CAP: distress zone stocks cannot exceed 50/100.
+
+ENHANCED_WEIGHTS = {
+    "graham":    0.25,
+    "quality":   0.22,
+    "momentum":  0.18,
+    "piotroski": 0.18,
+    "risk":      0.10,
+    "altman":    0.07,
+}
+
+ENHANCED_VERDICTS = [
+    (75, "STRONG BUY",  "strong-buy",  "All six pillars aligned — highest-conviction signal"),
+    (60, "BUY",         "buy",         "Strong across most factors — good risk/reward"),
+    (45, "WATCH",       "watch",       "Mixed signals — monitor for better entry"),
+    (30, "HOLD/WEAK",   "hold",        "Significant concerns across multiple factors"),
+    (0,  "AVOID",       "avoid",       "Fails on multiple pillars — high risk"),
+]
+
+
+def enhanced_composite(
+    graham_result:    dict,
+    quality_result:   dict,
+    momentum_result:  dict,
+    piotroski_result: dict,
+    risk_result:      dict,
+    altman_result:    dict,
+) -> dict:
+    """
+    Six-factor composite score.
+
+    All input dicts are the return values of their respective score() functions:
+      graham_result    → graham.score()
+      quality_result   → quality.score()
+      momentum_result  → momentum.score()
+      piotroski_result → piotroski.score()
+      risk_result      → risk_metrics.score()
+      altman_result    → altman.score()
+
+    Returns a dict with composite_score (0-100), verdict, and per-pillar
+    percentages, compatible with display in app.py.
+    """
+
+    # ── Normalise each pillar to 0-100 pct ───────────────────────────────────
+    def _pct(result, score_key="total_score", max_key="total_max"):
+        s = result.get(score_key, 0) or 0
+        m = result.get(max_key,   100) or 100
+        return (s / m * 100) if m else 0
+
+    g_pct  = _pct(graham_result)
+    q_pct  = _pct(quality_result)
+    m_pct  = _pct(momentum_result)
+    f_pct  = (piotroski_result.get("f_score", 0) / 9 * 100)  # 0-9 scale
+    r_pct  = _pct(risk_result, "risk_score", "risk_score_max")
+    a_pct  = altman_result.get("risk_score", 50)              # 0-100 already
+
+    # ── Weighted sum ──────────────────────────────────────────────────────────
+    raw_score = (
+        g_pct  * ENHANCED_WEIGHTS["graham"]    +
+        q_pct  * ENHANCED_WEIGHTS["quality"]   +
+        m_pct  * ENHANCED_WEIGHTS["momentum"]  +
+        f_pct  * ENHANCED_WEIGHTS["piotroski"] +
+        r_pct  * ENHANCED_WEIGHTS["risk"]      +
+        a_pct  * ENHANCED_WEIGHTS["altman"]
+    )
+
+    # ── Altman hard cap — distress zone stocks cannot score above 50 ──────────
+    altman_zone = altman_result.get("zone", "unknown")
+    if altman_zone == "distress":
+        raw_score = min(raw_score, 50.0)
+        altman_cap_applied = True
+    else:
+        altman_cap_applied = False
+
+    composite_score = round(raw_score, 1)
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    verdict = label = description = ""
+    for threshold, v, l, d in ENHANCED_VERDICTS:
+        if composite_score >= threshold:
+            verdict, label, description = v, l, d
+            break
+
+    # ── Value trap check ─────────────────────────────────────────────────────
+    # Good Graham score but weak momentum AND weak Piotroski = classic value trap
+    value_trap_warning = (
+        g_pct >= 60 and
+        m_pct < 30  and
+        piotroski_result.get("f_score", 5) <= 3
+    )
+
+    # ── Quality flag: high Piotroski + high Quality = compounding machine ─────
+    compounder_flag = (
+        piotroski_result.get("f_score", 0) >= 7 and
+        q_pct >= 65
+    )
+
+    return {
+        # Pillar percentages
+        "graham_pct":      round(g_pct, 1),
+        "quality_pct":     round(q_pct, 1),
+        "momentum_pct":    round(m_pct, 1),
+        "piotroski_pct":   round(f_pct, 1),
+        "risk_pct":        round(r_pct, 1),
+        "altman_pct":      round(a_pct, 1),
+
+        # Score and verdict
+        "composite_score":   composite_score,
+        "verdict":           verdict,
+        "verdict_label":     label,
+        "verdict_desc":      description,
+
+        # Flags
+        "value_trap_warning":  value_trap_warning,
+        "compounder_flag":     compounder_flag,
+        "altman_cap_applied":  altman_cap_applied,
+
+        "weights": ENHANCED_WEIGHTS,
+    }

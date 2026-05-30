@@ -336,6 +336,29 @@ def fetch_company_facts(symbol: str) -> dict:
         "PaymentsForCapitalImprovements",
     ])
 
+    # ── Extended fields: Altman Z-Score, Greenblatt, Piotroski ─────────────
+    # Total Assets — Piotroski F1/F3/F4/F5/F9 & Altman X1/X2/X3/X5
+    total_assets_df = annual(facts, "Assets")
+
+    # Retained Earnings — Altman X2
+    retained_earnings_df = _try_concepts(facts, [
+        "RetainedEarningsAccumulatedDeficit",
+        "RetainedEarnings",
+    ])
+
+    # Net PP&E — Greenblatt ROIC (NWC + Net PP&E)
+    ppe_net_df = _try_concepts(facts, [
+        "PropertyPlantAndEquipmentNet",
+        "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization",
+    ])
+
+    # Cash & Equivalents — Greenblatt EV (MktCap + Debt − Cash)
+    cash_df = _try_concepts(facts, [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsAndShortTermInvestments",
+        "CashAndShortTermInvestments",
+    ])
+
     # ── BVPS (requires end-date-aligned equity + shares) ─────────────────────
     bvps_df = _bvps_df(equity_df, shares_df)
 
@@ -350,22 +373,28 @@ def fetch_company_facts(symbol: str) -> dict:
         print(f"  [SEC] ✅ All key fields resolved for {symbol}")
 
     return {
-        "cik":          cik,
-        "name":         full_name,
-        "sector":       sector,
-        "eps":          eps_df.to_dict("records"),
-        "bvps":         bvps_df.to_dict("records"),
-        "cur_ast":      cur_ast_df.to_dict("records"),
-        "cur_lib":      cur_lib_df.to_dict("records"),
-        "lt_debt":      lt_debt_df.to_dict("records"),
-        "tot_lib":      tot_lib_df.to_dict("records"),
-        "equity":       equity_df.to_dict("records"),
-        "shares":       shares_df.to_dict("records"),
-        "net_inc":      net_inc_df.to_dict("records"),
-        "revenue":      rev_df.to_dict("records"),
-        "dividends":    div_df.to_dict("records"),
-        "gross_profit": gross_profit_df.to_dict("records"),
-        "op_income":    operating_inc_df.to_dict("records"),
-        "op_cf":        operating_cf_df.to_dict("records"),
-        "capex":        capex_df.to_dict("records"),
+        "cik":               cik,
+        "name":              full_name,
+        "sector":            sector,
+        # ── Core Graham & Quality ────────────────────────────────────────────
+        "eps":               eps_df.to_dict("records"),
+        "bvps":              bvps_df.to_dict("records"),
+        "cur_ast":           cur_ast_df.to_dict("records"),
+        "cur_lib":           cur_lib_df.to_dict("records"),
+        "lt_debt":           lt_debt_df.to_dict("records"),
+        "tot_lib":           tot_lib_df.to_dict("records"),
+        "equity":            equity_df.to_dict("records"),
+        "shares":            shares_df.to_dict("records"),
+        "net_inc":           net_inc_df.to_dict("records"),
+        "revenue":           rev_df.to_dict("records"),
+        "dividends":         div_df.to_dict("records"),
+        "gross_profit":      gross_profit_df.to_dict("records"),
+        "op_income":         operating_inc_df.to_dict("records"),
+        "op_cf":             operating_cf_df.to_dict("records"),
+        "capex":             capex_df.to_dict("records"),
+        # ── Extended: Altman / Greenblatt / Piotroski ────────────────────────
+        "total_assets":      total_assets_df.to_dict("records"),
+        "retained_earnings": retained_earnings_df.to_dict("records"),
+        "ppe_net":           ppe_net_df.to_dict("records"),
+        "cash":              cash_df.to_dict("records"),
     }

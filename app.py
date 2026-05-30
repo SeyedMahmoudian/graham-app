@@ -22,6 +22,10 @@ import screener
 import universe
 import alpha_vantage_client
 import portfolio as portfolio_engine
+import piotroski
+import altman
+import risk_metrics
+import greenblatt
 
 # ── App Init ──────────────────────────────────────────────────────────────────
 
@@ -94,8 +98,27 @@ def analyze_stock(symbol: str) -> dict:
         except Exception as e:
             print(f"Momentum calculation failed: {e}")
 
-    # Composite
+    # Original composite (kept for backward-compat with screener)
     comp = scorer.composite(g, q, m_result)
+
+    # ── New quant modules ─────────────────────────────────────────────────
+    piotroski_result = piotroski.score(sec_facts)
+
+    altman_result = altman.score(price, sec_facts)
+
+    risk_result = {"risk_score": 50, "risk_score_max": 100, "risk_criteria": []}
+    if hist is not None and not hist.empty:
+        try:
+            risk_result = risk_metrics.score(hist, spy_hist)
+        except Exception as e:
+            print(f"Risk metrics calculation failed: {e}")
+
+    greenblatt_result = greenblatt.compute_single(price, sec_facts)
+
+    # Enhanced 6-factor composite
+    enhanced = scorer.enhanced_composite(
+        g, q, m_result, piotroski_result, risk_result, altman_result
+    )
 
     result = {
         "symbol":    symbol,
@@ -106,6 +129,13 @@ def analyze_stock(symbol: str) -> dict:
         "quality":   q,
         "momentum":  m_result,
         "composite": comp,
+        # ── New ──────────────────────────────────────────
+        "piotroski":   piotroski_result,
+        "altman":      altman_result,
+        "risk":        risk_result,
+        "greenblatt":  greenblatt_result,
+        "enhanced":    enhanced,
+        # ─────────────────────────────────────────────────
         "price_history": hist.to_dict() if hist is not None else None,
         "spy_history": spy_hist.to_dict() if spy_hist is not None else None,
     }
@@ -635,6 +665,275 @@ def load_universe(n_clicks):
 
 # ── Analyze ───────────────────────────────────────────────────────────────────
 
+# ── New quant UI helpers ──────────────────────────────────────────────────────
+
+def _composite_banner(data: dict) -> html.Div:
+    """
+    Smart composite banner: shows 6-pillar enhanced composite when available,
+    falls back to original 3-pillar composite for older cached results.
+    """
+    enhanced = data.get("enhanced") or {}
+    comp     = data.get("composite") or {}
+    has_enh  = bool(enhanced.get("composite_score") is not None)
+    src      = enhanced if has_enh else comp
+
+    verdict       = src.get("verdict",      "N/A")
+    verdict_label = src.get("verdict_label","pending")
+    verdict_desc  = src.get("verdict_desc", "")
+    score         = src.get("composite_score", 0) or 0
+
+    # Pillar list
+    if has_enh:
+        pillars = [
+            ("Graham",    enhanced.get("graham_pct",    0), "25%"),
+            ("Quality",   enhanced.get("quality_pct",   0), "22%"),
+            ("Momentum",  enhanced.get("momentum_pct",  0), "18%"),
+            ("Piotroski", enhanced.get("piotroski_pct", 0), "18%"),
+            ("Risk",      enhanced.get("risk_pct",      0), "10%"),
+            ("Altman",    enhanced.get("altman_pct",    0), " 7%"),
+        ]
+        score_label = "Enhanced Score"
+    else:
+        pillars = [
+            ("Graham",   comp.get("graham_pct",   0), "40%"),
+            ("Quality",  comp.get("quality_pct",  0), "35%"),
+            ("Momentum", comp.get("momentum_pct") or 0, "25%"),
+        ]
+        score_label = "Composite"
+
+    pillar_els = [_pillar(l, round(v) if isinstance(v, float) else v, w)
+                  for l, v, w in pillars]
+    pillar_els.append(html.Div([
+        html.Div(f"{score:.0f}", className="pillar-value", style={"fontSize": "28px"}),
+        html.Div(score_label, className="pillar-label"),
+    ]))
+
+    # Flags row
+    flags = []
+    if enhanced.get("value_trap_warning") or comp.get("value_trap_warning"):
+        flags.append(html.Span("⚠️ Value Trap Risk",
+                               style={"background": "#3a2800", "color": AMBER,
+                                      "borderRadius": "6px", "padding": "3px 10px",
+                                      "fontSize": "12px", "fontWeight": "600"}))
+    if enhanced.get("compounder_flag"):
+        flags.append(html.Span("🚀 Compounder Signal",
+                               style={"background": "#003a1a", "color": GREEN,
+                                      "borderRadius": "6px", "padding": "3px 10px",
+                                      "fontSize": "12px", "fontWeight": "600"}))
+    if enhanced.get("altman_cap_applied"):
+        flags.append(html.Span("🔴 Altman Distress Cap Active",
+                               style={"background": "#3a0000", "color": RED,
+                                      "borderRadius": "6px", "padding": "3px 10px",
+                                      "fontSize": "12px", "fontWeight": "600"}))
+
+    return html.Div(className="composite-banner", children=[
+        html.Div([
+            html.Div(verdict, className="composite-banner-verdict",
+                     style={"color": _verdict_color(verdict_label)}),
+            html.Div(verdict_desc, className="composite-banner-desc"),
+            html.Div(flags, style={"display": "flex", "gap": "8px",
+                                   "flexWrap": "wrap", "marginTop": "8px"})
+            if flags else html.Div(),
+        ]),
+        html.Div(className="pillar-scores", children=pillar_els),
+    ])
+
+
+def _piotroski_card(data: dict) -> html.Div:
+    """Piotroski F-Score card: 9 binary signals in 3 category blocks."""
+    p = data.get("piotroski") or {}
+    if not p:
+        return html.Div()
+
+    f_score  = p.get("f_score", 0)
+    label    = p.get("label", "neutral")
+    interp   = p.get("interpretation", "")
+    signals  = p.get("signals", [])
+
+    lc = {"strong": GREEN, "neutral": AMBER, "weak": RED}.get(label, MUTED)
+
+    # Group signals by category
+    cats: dict = {}
+    for s in signals:
+        cats.setdefault(s.get("category", "Other"), []).append(s)
+
+    cat_blocks = []
+    for cat_name, sigs in cats.items():
+        rows = []
+        for s in sigs:
+            on = s["signal"] == 1
+            rows.append(html.Div(style={
+                "display": "flex", "gap": "10px", "alignItems": "flex-start",
+                "padding": "6px 0", "borderBottom": f"1px solid {BORDER}"
+            }, children=[
+                html.Span("✅" if on else "❌",
+                          style={"fontSize": "15px", "minWidth": "20px", "marginTop": "1px"}),
+                html.Div([
+                    html.Div(f"{s['id']}: {s['label']}",
+                             style={"fontSize": "13px", "fontWeight": "600",
+                                    "color": TEXT if on else MUTED}),
+                    html.Div(s["note"],
+                             style={"fontSize": "11px", "color": MUTED, "marginTop": "2px"}),
+                ]),
+            ]))
+        cat_blocks.append(html.Div(style={"flex": "1", "minWidth": "240px"}, children=[
+            html.Div(cat_name.upper(),
+                     style={"fontSize": "10px", "fontWeight": "700", "color": MUTED,
+                            "letterSpacing": "0.08em", "marginBottom": "6px",
+                            "paddingBottom": "4px", "borderBottom": f"2px solid {BORDER}"}),
+            *rows,
+        ]))
+
+    return html.Div(className="scorecard", children=[
+        html.Div(style={"display": "flex", "alignItems": "center",
+                        "gap": "10px", "padding": "14px 18px 10px"}, children=[
+            html.Span("Piotroski F-Score",
+                      style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{f_score}/9",
+                      style={"fontSize": "22px", "fontWeight": "800", "color": lc}),
+            html.Span(f"— {label.title()}",
+                      style={"fontSize": "13px", "color": lc}),
+        ]),
+        html.Div(interp, style={"fontSize": "12px", "color": MUTED,
+                                "padding": "0 18px 12px", "fontStyle": "italic"}),
+        html.Div(cat_blocks,
+                 style={"display": "flex", "gap": "20px", "flexWrap": "wrap",
+                        "padding": "0 18px 16px"}),
+    ])
+
+
+def _altman_card(data: dict) -> html.Div:
+    """Altman Z-Score card: zone badge + component breakdown."""
+    a = data.get("altman") or {}
+    if not a:
+        return html.Div()
+
+    z_score    = a.get("z_score")
+    zone       = a.get("zone", "unknown")
+    zone_label = a.get("zone_label", "Unknown")
+    note       = a.get("note", "")
+    model      = a.get("model", "")
+    n_avail    = a.get("n_available", 0)
+    comps      = a.get("components") or {}
+
+    zc = {"safe": GREEN, "grey": AMBER, "distress": RED, "unknown": MUTED}.get(zone, MUTED)
+    zbg = {"safe": "#001a0a", "grey": "#2a2000", "distress": "#2a0000",
+           "unknown": CARD}.get(zone, CARD)
+
+    comp_labels = [
+        ("x1_working_capital",    "X1 — Working Capital / Assets"),
+        ("x2_retained_earnings",  "X2 — Retained Earnings / Assets"),
+        ("x3_ebit_ratio",         "X3 — EBIT / Assets"),
+        ("x4_equity_liabilities", "X4 — Market Cap / Liabilities"),
+        ("x5_asset_turnover",     "X5 — Revenue / Assets"),
+    ]
+    comp_rows = []
+    for key, lbl in comp_labels:
+        v = comps.get(key)
+        comp_rows.append(html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "padding": "4px 0", "borderBottom": f"1px solid {BORDER}",
+            "fontSize": "12px",
+        }, children=[
+            html.Span(lbl, style={"color": MUTED}),
+            html.Span(f"{v:.3f}" if v is not None else "N/A",
+                      style={"color": TEXT if v is not None else MUTED,
+                             "fontWeight": "600"}),
+        ]))
+
+    return html.Div(className="scorecard", children=[
+        html.Div("Altman Z-Score (Bankruptcy Risk)",
+                 style={"fontSize": "14px", "fontWeight": "700", "color": TEXT,
+                        "padding": "14px 18px 10px"}),
+        # Zone badge
+        html.Div(style={"background": zbg, "borderRadius": "10px",
+                        "margin": "0 16px 14px", "padding": "14px 18px",
+                        "border": f"1px solid {zc}33"}, children=[
+            html.Div(f"Z = {z_score:.2f}" if z_score is not None else "N/A",
+                     style={"fontSize": "34px", "fontWeight": "800", "color": zc}),
+            html.Div(zone_label,
+                     style={"fontSize": "16px", "fontWeight": "700",
+                            "color": zc, "marginTop": "2px"}),
+            html.Div(note,
+                     style={"fontSize": "11px", "color": MUTED, "marginTop": "6px"}),
+            html.Div(f"Model: {model} · {n_avail}/5 components",
+                     style={"fontSize": "10px", "color": MUTED, "marginTop": "3px"}),
+        ]),
+        # Components
+        html.Div(comp_rows, style={"padding": "0 18px 14px"}),
+    ])
+
+
+def _risk_card(data: dict) -> html.Div:
+    """Risk & performance metrics dashboard."""
+    r = data.get("risk") or {}
+    if not r or r.get("error") and not r.get("sharpe"):
+        return html.Div()
+
+    n_yrs = r.get("n_years", 0)
+    if not n_yrs:
+        return html.Div()
+
+    def _fv(val, decimals=2, suffix=""):
+        return f"{val:.{decimals}f}{suffix}" if val is not None else "N/A"
+
+    def _mc(val, good_above=None, bad_below=None):
+        if val is None:
+            return MUTED
+        if good_above is not None and val >= good_above:
+            return GREEN
+        if bad_below is not None and val <= bad_below:
+            return RED
+        return AMBER
+
+    metrics = [
+        ("Sharpe Ratio",       _fv(r.get("sharpe")),
+         _mc(r.get("sharpe"), good_above=1.0, bad_below=0)),
+        ("Sortino Ratio",      _fv(r.get("sortino")),
+         _mc(r.get("sortino"), good_above=1.5, bad_below=0)),
+        ("Beta (vs SPY)",      _fv(r.get("beta")),
+         _mc(r.get("beta"), bad_below=1.5)),
+        ("Alpha (ann.)",       _fv(r.get("alpha"), 1, "%"),
+         _mc(r.get("alpha"), good_above=0, bad_below=-5)),
+        ("Max Drawdown",       _fv(r.get("max_drawdown"), 1, "%"),
+         _mc(r.get("max_drawdown"), bad_below=-30)),
+        ("Ann. Volatility",    _fv(r.get("volatility_annual"), 1, "%"),
+         _mc(r.get("volatility_annual"), bad_below=40)),
+        ("VaR 95% (monthly)",  _fv(r.get("var_95"), 1, "%"), MUTED),
+        ("CVaR 95% (monthly)", _fv(r.get("cvar_95"), 1, "%"), MUTED),
+        ("Ann. Return",        _fv(r.get("annual_return"), 1, "%"),
+         _mc(r.get("annual_return"), good_above=10, bad_below=0)),
+        ("Calmar Ratio",       _fv(r.get("calmar")),
+         _mc(r.get("calmar"), good_above=1.0, bad_below=0)),
+    ]
+
+    metric_cells = [
+        html.Div(style={
+            "background": DARK, "borderRadius": "8px", "padding": "10px 14px",
+            "border": f"1px solid {BORDER}", "minWidth": "140px",
+        }, children=[
+            html.Div(lbl, style={"fontSize": "11px", "color": MUTED,
+                                 "marginBottom": "4px"}),
+            html.Div(val, style={"fontSize": "18px", "fontWeight": "700",
+                                 "color": col}),
+        ])
+        for lbl, val, col in metrics
+    ]
+
+    risk_criteria = r.get("risk_criteria") or []
+
+    return html.Div(className="scorecard", children=[
+        html.Div(f"Risk & Performance — {n_yrs:.0f}yr History",
+                 style={"fontSize": "14px", "fontWeight": "700", "color": TEXT,
+                        "padding": "14px 18px 12px"}),
+        html.Div(metric_cells,
+                 style={"display": "flex", "flexWrap": "wrap", "gap": "10px",
+                        "padding": "0 16px 16px"}),
+        _render_scorecard("Risk Score Breakdown", risk_criteria, "risk")
+        if risk_criteria else html.Div(),
+    ])
+
+
 def _build_analysis_content(data: dict) -> list:
     """Render analysis data into Dash components. Pure function, no side effects."""
     if not data or "error" in data:
@@ -649,16 +948,24 @@ def _build_analysis_content(data: dict) -> list:
     comp   = data["composite"]
     price  = data.get("price")
 
+    # ── Extra stat row items ──────────────────────────────────────────────────
+    p_data = data.get("piotroski") or {}
+    a_data = data.get("altman")    or {}
+    r_data = data.get("risk")      or {}
+
     header = html.Div(className="company-header", children=[
         html.Div(className="company-header-left", children=[
             html.H2(name),
             html.Div(f"{symbol} · {sector}", className="company-meta"),
             html.Div(className="stats-row", children=[
-                _stat("Price",     f"${price:.2f}"            if price              else "N/A"),
-                _stat("P/E",       f"{g.get('pe', 0):.1f}×"  if g.get('pe')        else "N/A"),
-                _stat("P/B",       f"{g.get('pb', 0):.2f}×"  if g.get('pb')        else "N/A"),
-                _stat("ROE",       f"{q.get('roe', 0):.1f}%" if q.get('roe')       else "N/A"),
-                _stat("Op Margin", f"{q.get('op_margin', 0):.1f}%" if q.get('op_margin') else "N/A"),
+                _stat("Price",     f"${price:.2f}"                  if price                      else "N/A"),
+                _stat("P/E",       f"{g.get('pe', 0):.1f}×"        if g.get('pe')                else "N/A"),
+                _stat("P/B",       f"{g.get('pb', 0):.2f}×"        if g.get('pb')                else "N/A"),
+                _stat("ROE",       f"{q.get('roe', 0):.1f}%"       if q.get('roe')               else "N/A"),
+                _stat("Op Margin", f"{q.get('op_margin', 0):.1f}%" if q.get('op_margin')         else "N/A"),
+                _stat("Sharpe",    f"{r_data['sharpe']:.2f}"        if r_data.get('sharpe') is not None else "N/A"),
+                _stat("Beta",      f"{r_data['beta']:.2f}"          if r_data.get('beta')  is not None else "N/A"),
+                _stat("F-Score",   f"{p_data['f_score']}/9"         if p_data.get('f_score') is not None else "N/A"),
             ])
         ]),
         html.Div(className="grade-badge", children=[
@@ -669,35 +976,23 @@ def _build_analysis_content(data: dict) -> list:
         ])
     ])
 
-    composite_banner = html.Div(className="composite-banner", children=[
-        html.Div([
-            html.Div(comp["verdict"], className="composite-banner-verdict",
-                     style={"color": _verdict_color(comp["verdict_label"])}),
-            html.Div(comp["verdict_desc"], className="composite-banner-desc"),
-        ]),
-        html.Div(className="pillar-scores", children=[
-            _pillar("Graham",   comp["graham_pct"],              "40%"),
-            _pillar("Quality",  comp["quality_pct"],             "35%"),
-            _pillar("Momentum", comp.get("momentum_pct") or "--","25%"),
-            html.Div([
-                html.Div(f"{comp['composite_score']:.0f}", className="pillar-value",
-                         style={"fontSize": "28px"}),
-                html.Div("Composite", className="pillar-label"),
-            ])
-        ])
-    ])
-
-    warnings = []
-    if comp["value_trap_warning"]:
-        warnings.append(html.Div(
-            "⚠️ Value Trap Risk: Cheap but declining margins and weak momentum.",
-            className="warning-banner"
-        ))
+    banner = _composite_banner(data)
 
     graham_card   = _render_scorecard("Graham Value Analysis", g["criteria"], "graham")
     quality_card  = _render_scorecard("Quality Analysis",      q["criteria"], "quality")
     momentum_card = (_render_scorecard("Momentum Analysis", m["criteria"], "momentum")
                      if m.get("criteria") else html.Div())
+
+    # New quant cards — side by side when both available
+    piotroski_card = _piotroski_card(data)
+    altman_card    = _altman_card(data)
+    quant_row = html.Div(style={"display": "grid",
+                                "gridTemplateColumns": "1fr 1fr",
+                                "gap": "16px"}, children=[
+        piotroski_card, altman_card
+    ]) if p_data and a_data else html.Div()
+
+    risk_card = _risk_card(data)
 
     charts_row = html.Div(className="charts-grid", children=[
         _eps_chart(g.get("eps_history", []), symbol),
@@ -707,10 +1002,10 @@ def _build_analysis_content(data: dict) -> list:
     div_chart      = _div_chart(g.get("div_history", []), symbol)
     graham_details = _graham_details_card(g)
 
-    return [header, composite_banner] + warnings + [
-        graham_card, quality_card, momentum_card,
-        charts_row, div_chart, graham_details
-    ]
+    return [header, banner,
+            graham_card, quality_card, momentum_card,
+            quant_row, risk_card,
+            charts_row, div_chart, graham_details]
 
 
 @callback(
