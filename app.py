@@ -32,6 +32,7 @@ import greenblatt
 app = dash.Dash(
     __name__,
     title="Graham Score — Quant",
+    suppress_callback_exceptions=True,
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}]
 )
 server = app.server
@@ -360,8 +361,13 @@ app.layout = html.Div(className="app-container", children=[
     dcc.Store(id="screener-click-ticker"),   # symbol clicked in screener table
     dcc.Store(id="portfolio-refresh-store", data=0),  # increment to trigger refresh
     dcc.Store(id="active-analysis-symbol"),           # symbol currently analyzed
+    dcc.Store(id="screener-ready-store",  data=0),    # bumped once when loading completes
+    dcc.Store(id="screener-viewed-store", data=[]),   # symbols the user has analyzed
     # interval disabled=True once loading finishes to stop constant re-renders
     dcc.Interval(id="screener-progress-interval", interval=2000, disabled=True),
+    # fires once 600ms after page load to render already-cached screener data
+    # and re-enable the progress interval so a post-refresh render always works
+    dcc.Interval(id="page-load-interval", interval=600, max_intervals=1, disabled=False),
     dcc.Loading(id="loading", type="circle", color=BLUE, children=html.Div(id="loading-trigger"))
 ])
 
@@ -413,45 +419,84 @@ def capture_screener_click(n_clicks_list):
 
 # ── Screener ──────────────────────────────────────────────────────────────────
 
+# In-memory portfolio cache — one disk read per 30s max regardless of render frequency
+_portfolio_cache: dict = {"symbols": {}, "ts": 0.0}
+
+def _get_portfolio_symbols() -> dict[str, str]:
+    """Return {symbol: portfolio_name}, refreshed at most every 30 seconds."""
+    import time as _t
+    global _portfolio_cache
+    if _t.time() - _portfolio_cache["ts"] < 30:
+        return _portfolio_cache["symbols"]
+    result: dict[str, str] = {}
+    try:
+        for pname in (portfolio_engine.list_portfolios() or []):
+            port = portfolio_engine.get_portfolio(pname)
+            for h in (port.get("holdings") or []):
+                sym = h.get("symbol")
+                if sym:
+                    result[sym] = pname
+    except Exception:
+        pass
+    _portfolio_cache = {"symbols": result, "ts": _t.time()}
+    return result
+
+
 @callback(
     Output("screener-progress-info", "children"),
     Output("screener-progress-interval", "disabled", allow_duplicate=True),
+    Output("screener-ready-store", "data"),
     Input("screener-progress-interval", "n_intervals"),
+    State("screener-ready-store", "data"),
     prevent_initial_call=True
 )
-def update_progress(n):
+def update_progress(n, ready_val):
     global _last_progress_state
 
     prog = screener.get_progress()
     prog_key = (prog["running"], prog["total"], prog["done"], prog["current"])
 
     if prog_key == _last_progress_state:
-        return dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update
 
     _last_progress_state = prog_key
 
-    # Disable interval once loading is fully complete
     interval_disabled = not prog["running"] and prog["done"] > 0
+
+    # Bump screener-ready-store whenever loading has finished so the table
+    # rebuilds correctly both after initial load AND after a page refresh.
+    # We encode the last signalled count as a negative number to distinguish
+    # "never signalled" (0) from "signalled for N stocks" (-N).
+    current_done = prog["done"]
+    already_signalled = (ready_val or 0) < 0 and abs(ready_val or 0) == current_done
+    if interval_disabled and current_done > 0 and not already_signalled:
+        new_ready = -current_done
+    else:
+        new_ready = dash.no_update
 
     if not prog["running"] and prog["total"] == 0:
         return html.Div([
             html.Span("🟢 Ready to load universe", style={"color": MUTED}),
-        ], style={"display": "flex", "alignItems": "center", "gap": "8px"}), True
+        ], style={"display": "flex", "alignItems": "center", "gap": "8px"}), True, new_ready
 
     if prog["running"]:
         pct = int(prog["done"] / prog["total"] * 100) if prog["total"] else 0
+        phase_label = {
+            "cached":   "⚡ Phase 1 — parallel scoring",
+            "fetching": "🌐 Phase 2 — fetching from SEC",
+        }.get(prog.get("phase", ""), "🔄 Processing")
         return html.Div([
-            html.Span(f"🔄 Processing: {prog['current']}", style={"color": BLUE, "fontWeight": "600"}),
+            html.Span(f"{phase_label}: {prog['current']}", style={"color": BLUE, "fontWeight": "600"}),
             html.Span(f"({prog['done']}/{prog['total']} — {pct}%)", style={"color": MUTED, "fontSize": "12px"}),
-        ], style={"display": "flex", "alignItems": "center", "gap": "8px"}), False
+        ], style={"display": "flex", "alignItems": "center", "gap": "8px"}), False, dash.no_update
     else:
         if prog["done"] > 0:
             return html.Div([
                 html.Span("✅ Analysis complete", style={"color": GREEN, "fontWeight": "600"}),
                 html.Span(f"{prog['done']} stocks analyzed", style={"color": MUTED, "fontSize": "12px"}),
-            ], style={"display": "flex", "alignItems": "center", "gap": "8px"}), True
+            ], style={"display": "flex", "alignItems": "center", "gap": "8px"}), True, new_ready
         else:
-            return "", True
+            return "", True, new_ready
 
 
 @callback(
@@ -499,131 +544,157 @@ def update_progress_bar(n):
 @callback(
     Output("screener-table-container", "children"),
     Output("sector-filter", "options"),
-    Input("screener-progress-interval", "n_intervals"),
-    Input("sector-filter", "value"),
-    Input("screener-sort-store", "data"),
-    prevent_initial_call=True
+    Input("screener-ready-store",  "data"),
+    Input("page-load-interval",    "n_intervals"),
+    Input("sector-filter",         "value"),
+    Input("screener-sort-store",   "data"),
+    Input("screener-viewed-store", "data"),
+    prevent_initial_call=False
 )
-def render_screener_table(n, sector_filter, sort_state):
+def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data):
     global _last_screener_results
+    # Always allow a fresh render on page-load trigger so a browser refresh
+    # never gets stuck behind a stale dedup-cache value.
+    if dash.ctx.triggered_id == "page-load-interval":
+        _last_screener_results = None
 
-    prog = screener.get_progress()
-    results = screener.get_screener_results()
+    results    = screener.get_screener_results()
+    prog       = screener.get_progress()
+    viewed_set = frozenset(viewed_data or [])
+    sort_col   = (sort_state or {}).get("col", "composite_score")
+    sort_asc   = (sort_state or {}).get("asc", False)
 
-    # Only re-render when results set or running state actually changes
-    sort_col = (sort_state or {}).get("col", "composite_score")
-    sort_asc = (sort_state or {}).get("asc", False)
-    state_key = (prog["running"], len(results), sector_filter or "", sort_col, sort_asc)
+    state_key = (len(results), sector_filter or "", sort_col, sort_asc, viewed_set)
     if state_key == _last_screener_results:
         return dash.no_update, dash.no_update
-
     _last_screener_results = state_key
 
-    # Rebuild sector dropdown options
     sectors = sorted(set(r["sector"] for r in results if r.get("sector")))
     sector_options = [{"label": "All Sectors", "value": ""}] + [
         {"label": s, "value": s} for s in sectors
     ]
 
-    if prog["running"]:
-        return (
-            html.Div("Engine is warming up please wait...",
-                     style={"textAlign": "center", "padding": "40px", "color": BLUE, "fontWeight": "600"}),
-            sector_options
-        )
-
     if not results:
+        if prog["running"]:
+            return (
+                html.Div([
+                    html.Div("⚡ Loading in background…",
+                             style={"color": BLUE, "fontWeight": "600", "marginBottom": "6px"}),
+                    html.Div("Table will appear automatically when loading finishes.",
+                             style={"color": MUTED, "fontSize": "13px"}),
+                ], style={"textAlign": "center", "padding": "40px"}),
+                sector_options,
+            )
         return (
             html.Div("Click 'Load Universe' to start analysis",
                      style={"textAlign": "center", "padding": "40px", "color": MUTED}),
-            sector_options
+            sector_options,
         )
 
-    # Apply sector filter
-    filtered = [r for r in results if not sector_filter or r.get("sector") == sector_filter]
+    portfolio_symbols = _get_portfolio_symbols()
 
-    # Apply sort
-    sort_col = (sort_state or {}).get("col", "composite_score")
-    sort_asc = (sort_state or {}).get("asc", False)
+    filtered = [r for r in results if not sector_filter or r.get("sector") == sector_filter]
     text_cols = {"symbol", "name", "sector"}
     if sort_col in text_cols:
         filtered = sorted(filtered, key=lambda r: (r.get(sort_col) or "").lower(), reverse=not sort_asc)
     else:
         filtered = sorted(filtered, key=lambda r: r.get(sort_col) or 0, reverse=not sort_asc)
 
-    # ── Sortable column headers ───────────────────────────────────────────────
-    # Each sortable column renders as a button; the sort-store callback handles
-    # re-ordering. Non-sortable cols (#, Verdict) are plain <th>.
     SORT_COLS = [
-        ("#",         None),
-        ("Ticker",    "symbol"),
-        ("Company",   "name"),
-        ("Sector",    "sector"),
-        ("Graham ↕",  "graham_pct"),
-        ("Quality ↕", "quality_pct"),
+        ("#",           None),
+        ("Ticker",      "symbol"),
+        ("Company",     "name"),
+        ("Sector",      "sector"),
+        ("Graham ↕",    "graham_pct"),
+        ("Quality ↕",   "quality_pct"),
         ("Composite ↕", "composite_score"),
-        ("Verdict",   None),
+        ("Verdict",     None),
     ]
-
     header_cells = []
     for label, sort_key in SORT_COLS:
         if sort_key:
-            header_cells.append(html.Th(
-                html.Button(
-                    label,
-                    id={"type": "screener-sort-btn", "index": sort_key},
-                    className="sort-header-btn",
-                    n_clicks=0,
-                )
-            ))
+            header_cells.append(html.Th(html.Button(
+                label,
+                id={"type": "screener-sort-btn", "index": sort_key},
+                className="sort-header-btn", n_clicks=0,
+            )))
         else:
             header_cells.append(html.Th(label))
 
     rows = []
     for i, r in enumerate(filtered, 1):
-        # fundamental_only() returns "PENDING" — derive a label from the score
-        verdict = r["verdict"]
+        sym     = r["symbol"]
+        viewed  = sym in viewed_set
+        in_port = sym in portfolio_symbols
+
+        verdict       = r["verdict"]
         verdict_label = r["verdict_label"]
         if verdict == "PENDING":
             score = r["composite_score"]
-            if score >= 70:
-                verdict, verdict_label = "STRONG BUY*", "strong-buy"
-            elif score >= 55:
-                verdict, verdict_label = "BUY*", "buy"
-            elif score >= 40:
-                verdict, verdict_label = "WATCH*", "watch"
-            elif score >= 25:
-                verdict, verdict_label = "WEAK*", "hold"
-            else:
-                verdict, verdict_label = "AVOID*", "avoid"
+            if score >= 70:   verdict, verdict_label = "STRONG BUY*", "strong-buy"
+            elif score >= 55: verdict, verdict_label = "BUY*",        "buy"
+            elif score >= 40: verdict, verdict_label = "WATCH*",      "watch"
+            elif score >= 25: verdict, verdict_label = "WEAK*",       "hold"
+            else:             verdict, verdict_label = "AVOID*",      "avoid"
 
-        rows.append(html.Tr(children=[
+        badges = []
+        if viewed:
+            badges.append(html.Span("✓ Analyzed", style={
+                "fontSize": "10px", "color": GREEN,
+                "background": "#003318", "border": f"1px solid {GREEN}55",
+                "borderRadius": "4px", "padding": "1px 5px",
+            }))
+        if in_port:
+            badges.append(html.Span(f"💼 {portfolio_symbols[sym]}", style={
+                "fontSize": "10px", "color": AMBER,
+                "background": "#2a1e00", "border": f"1px solid {AMBER}55",
+                "borderRadius": "4px", "padding": "1px 5px",
+            }))
+        if r.get("analyzed") and r.get("graham_number"):
+            gn    = r["graham_number"]
+            price = r.get("price")
+            gc    = GREEN if (price and price <= gn) else MUTED
+            badges.append(html.Span(f"GN ${gn:.0f}", style={
+                "fontSize": "10px", "color": gc,
+                "background": DARK, "border": f"1px solid {BORDER}",
+                "borderRadius": "4px", "padding": "1px 5px",
+            }))
+
+        ticker_cell = html.Td(html.Div([
+            html.Button(sym, id={"type": "screener-ticker-btn", "index": sym},
+                        className="ticker-link-btn", n_clicks=0),
+            html.Div(badges, style={"display": "flex", "gap": "4px",
+                                    "flexWrap": "wrap", "marginTop": "3px"})
+            if badges else html.Div(),
+        ]), className="ticker-cell")
+
+        row_style = {}
+        if in_port:  row_style = {"borderLeft": f"3px solid {AMBER}"}
+        elif viewed: row_style = {"borderLeft": f"3px solid {GREEN}44"}
+
+        rows.append(html.Tr(style=row_style, children=[
             html.Td(str(i), className="rank-num"),
-            html.Td(
-                html.Button(
-                    r["symbol"],
-                    id={"type": "screener-ticker-btn", "index": r["symbol"]},
-                    className="ticker-link-btn",
-                    n_clicks=0,
-                ),
-                className="ticker-cell"
-            ),
+            ticker_cell,
             html.Td(r["name"][:30], className="company-name-cell", title=r["name"]),
             html.Td(r["sector"][:18], style={"fontSize": "12px", "color": MUTED}),
-            html.Td(html.Span(f"{r['graham_pct']:.0f}", className=f"score-pill {get_score_class(r['graham_pct'])}")),
-            html.Td(html.Span(f"{r['quality_pct']:.0f}", className=f"score-pill {get_score_class(r['quality_pct'])}")),
+            html.Td(html.Span(f"{r['graham_pct']:.0f}",      className=f"score-pill {get_score_class(r['graham_pct'])}")),
+            html.Td(html.Span(f"{r['quality_pct']:.0f}",     className=f"score-pill {get_score_class(r['quality_pct'])}")),
             html.Td(html.Span(f"{r['composite_score']:.0f}", className=f"score-pill {get_score_class(r['composite_score'])}")),
             html.Td(html.Span(verdict, className=f"verdict-pill {get_verdict_class(verdict_label)}")),
         ]))
 
-    note = html.Div(
-        f"Showing all {len(filtered):,} stocks. * Verdict based on fundamentals only (Graham + Quality). Analyze individually to include Momentum.",
-        style={"fontSize": "11px", "color": MUTED, "padding": "8px 4px", "fontStyle": "italic"}
-    )
+    n_analyzed  = sum(1 for r in filtered if r.get("analyzed"))
+    n_portfolio = sum(1 for r in filtered if r["symbol"] in portfolio_symbols)
+    note = html.Div([
+        html.Span(f"{len(filtered):,} stocks", style={"fontWeight": "600"}),
+        html.Span(f" · {n_analyzed} analyzed · {n_portfolio} in portfolio"
+                  " · * Verdict = fundamentals only — analyze individually to add Momentum",
+                  style={"color": MUTED}),
+    ], style={"fontSize": "11px", "padding": "8px 4px", "fontStyle": "italic"})
 
     table = html.Table(className="screener-table", children=[
         html.Thead(html.Tr(children=header_cells)),
-        html.Tbody(rows)
+        html.Tbody(rows),
     ])
 
     return html.Div([table, note]), sector_options
@@ -655,9 +726,17 @@ def update_sort(n_clicks_list, sort_state):
     Output("loading-trigger", "children"),
     Output("screener-progress-interval", "disabled"),
     Input("load-universe-btn", "n_clicks"),
+    Input("page-load-interval", "n_intervals"),
     prevent_initial_call=True
 )
-def load_universe(n_clicks):
+def load_universe(n_clicks, n_load):
+    triggered = dash.ctx.triggered_id
+    if triggered == "page-load-interval":
+        # On page load: enable the interval if a run is active or results exist
+        prog = screener.get_progress()
+        if prog["running"] or prog["done"] > 0:
+            return dash.no_update, False
+        return dash.no_update, True
     if n_clicks and n_clicks > 0:
         screener.load_universe_background()
         return "", False   # enable the interval so progress callbacks fire
@@ -1018,12 +1097,14 @@ def _build_analysis_content(data: dict) -> list:
     Output("ticker-input",            "value"),
     Output("add-to-portfolio-panel",  "style"),
     Output("active-analysis-symbol",  "data"),
+    Output("screener-viewed-store",   "data"),
     Input("analyze-btn",          "n_clicks"),
     Input("screener-click-ticker","data"),
     State("ticker-input",         "value"),
+    State("screener-viewed-store","data"),
     prevent_initial_call=True
 )
-def run_analysis(n_clicks, clicked_ticker, ticker_input_value):
+def run_analysis(n_clicks, clicked_ticker, ticker_input_value, viewed_list):
     """
     Single callback: fetch + score + render.
     Because analysis-content is a child of dcc.Loading(id='analysis-loading'),
@@ -1037,22 +1118,24 @@ def run_analysis(n_clicks, clicked_ticker, ticker_input_value):
         ticker = ticker_input_value
 
     if not ticker or not ticker.strip():
-        return [], None, "❌ Please enter a ticker symbol.", False, False, dash.no_update, {"display": "none"}, None
+        return [], None, "❌ Please enter a ticker symbol.", False, False, dash.no_update, {"display": "none"}, None, dash.no_update
 
     symbol = ticker.strip().upper()
     result = analyze_stock(symbol)
 
     if "error" in result:
-        return [], None, f"❌ {result['error']}", False, False, symbol, {"display": "none"}, None
+        return [], None, f"❌ {result['error']}", False, False, symbol, {"display": "none"}, None, dash.no_update
 
+    viewed_updated = list(set((viewed_list or []) + [symbol]))
     content = _build_analysis_content(result)
     return (
         content,
         result,
         f"✅ {result['name']} ({symbol}) — Analysis complete",
         False, False, symbol,
-        {"display": "block"},   # show add-to-portfolio panel
+        {"display": "block"},
         symbol,
+        viewed_updated,
     )
 
 
