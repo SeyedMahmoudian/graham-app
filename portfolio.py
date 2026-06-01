@@ -499,6 +499,207 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
 # Full simulation (backtest + Monte Carlo)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def analyze_weak_links(portfolio: dict, backtest: dict | None = None) -> dict:
+    """
+    Identify which holdings dragged portfolio performance below SPY over 10 years.
+
+    Two complementary lenses:
+
+    1. Individual CAGR vs SPY  ─────────────────────────────────────────────────
+       Each stock's own annualised return from the backtest start date, compared
+       directly to SPY's CAGR over the same period.
+       drag_bps = (stock_cagr − spy_cagr) × weight × 100   (basis points)
+       Negative drag_bps = underperformance proportional to portfolio weight.
+
+    2. Counterfactual swap  ────────────────────────────────────────────────────
+       For each holding, ask: "If I had replaced only THIS stock with SPY,
+       how would the portfolio have done?"
+       swap_delta_pct = counterfactual_total_return − actual_total_return
+       Positive swap_delta_pct means swapping this stock for SPY would have
+       *improved* returns — i.e. this stock was a drag.
+
+    Both lenses agree when a stock is truly the weak link. When they diverge,
+    it is usually because a small-weight stock had a catastrophic individual
+    return (lens 1 flags it) but its low weight limited the portfolio impact
+    (lens 2 shows it barely mattered).
+
+    Args:
+        portfolio:  portfolio dict (from load_portfolio).
+        backtest:   result of run_backtest(); if None, runs it internally.
+
+    Returns dict:
+        {
+          "spy_cagr":    float,          # SPY CAGR over the period
+          "port_cagr":   float,          # actual portfolio CAGR
+          "gap_cagr":    float,          # port_cagr − spy_cagr  (negative = underperformed)
+          "holdings": {
+            SYM: {
+              "weight":           float,  # $ weight at entry (0-1)
+              "stock_cagr":       float,  # annualised return of this stock alone
+              "spy_cagr":         float,  # same SPY CAGR for reference
+              "cagr_vs_spy":      float,  # stock_cagr − spy_cagr
+              "drag_bps":         float,  # weighted drag in basis points
+              "swap_delta_pct":   float,  # total-return improvement if swapped for SPY
+              "verdict":          str,    # "weak link" | "neutral" | "contributor"
+            },
+          },
+          "ranking":  [SYM, ...],        # worst to best by drag_bps
+          "weakest":  SYM | None,        # single biggest drag (by swap_delta_pct)
+          "error":    str | None,
+        }
+    """
+    holdings = portfolio.get("holdings", {})
+    if not holdings:
+        return {"error": "Portfolio is empty", "holdings": {}, "ranking": [], "weakest": None}
+
+    # ── Run backtest if not supplied ──────────────────────────────────────────
+    if backtest is None or backtest.get("error"):
+        backtest = run_backtest(portfolio)
+    if backtest.get("error"):
+        return {"error": backtest["error"], "holdings": {}, "ranking": [], "weakest": None}
+
+    symbols  = list(holdings.keys())
+    available = [s for s in symbols if s in backtest.get("holdings_detail", {})]
+    if not available:
+        return {"error": "No holdings detail in backtest", "holdings": {}, "ranking": [], "weakest": None}
+
+    port_cagr = backtest["cagr"]
+    spy_cagr  = backtest["spy_cagr"]
+    gap_cagr  = round(port_cagr - spy_cagr, 3)
+
+    # ── Rebuild price matrices from history for counterfactual swaps ──────────
+    histories: dict[str, pd.DataFrame] = {}
+    for sym in available + ["SPY"]:
+        h = _load_history(sym)
+        if not h.empty:
+            histories[sym] = h
+
+    # We need a wide aligned frame exactly as in run_backtest
+    to_align = {s: histories[s] for s in available + ["SPY"] if s in histories}
+    wide = _align_histories(to_align)
+    if wide.empty or len(wide) < 6:
+        return {"error": "Insufficient price history for weak-link analysis",
+                "holdings": {}, "ranking": [], "weakest": None}
+
+    entry_row  = wide.iloc[0]
+    exit_row   = wide.iloc[-1]
+    n_months   = len(wide)
+    n_years    = n_months / 12
+
+    # ── Entry values & weights ────────────────────────────────────────────────
+    port_created = portfolio.get("created", "2000-01-01")[:10]
+    splits_by_sym: dict[str, list[dict]] = {}
+    for sym in available:
+        h     = holdings[sym]
+        since = h.get("added_date") or port_created
+        splits_by_sym[sym] = _splits_since(sym, since)
+
+    entry_date = entry_row["Date"]
+    entry_values: dict[str, float] = {}
+    for sym in available:
+        if sym not in wide.columns:
+            continue
+        factor = _split_factor_at(splits_by_sym[sym], entry_date)
+        entry_values[sym] = holdings[sym]["shares"] * factor * float(entry_row[sym])
+
+    total_entry = sum(entry_values.values())
+    if total_entry <= 0:
+        return {"error": "Zero portfolio entry value", "holdings": {}, "ranking": [], "weakest": None}
+
+    weights = {sym: entry_values[sym] / total_entry for sym in entry_values}
+
+    # ── Actual portfolio final value (replicated, split-adjusted) ────────────
+    exit_date = exit_row["Date"]
+    def _port_value_at_exit(exclude_sym: str | None = None,
+                            replace_with_spy: bool = False) -> float:
+        """
+        Compute final portfolio value.
+        If exclude_sym is set and replace_with_spy=True, that holding's
+        entry $ are invested in SPY instead.
+        """
+        spy_price_entry = float(entry_row["SPY"])
+        spy_price_exit  = float(exit_row["SPY"])
+
+        total = 0.0
+        for sym in available:
+            if sym not in wide.columns:
+                continue
+            ev = entry_values[sym]
+            if sym == exclude_sym and replace_with_spy:
+                # Replace this holding with equivalent $ in SPY
+                spy_shares_equiv = ev / spy_price_entry if spy_price_entry > 0 else 0
+                total += spy_shares_equiv * spy_price_exit
+            else:
+                factor     = _split_factor_at(splits_by_sym[sym], exit_date)
+                adj_shares = holdings[sym]["shares"] * factor
+                total     += adj_shares * float(exit_row[sym])
+        return total
+
+    actual_final = _port_value_at_exit()
+    actual_total_return = (actual_final / total_entry - 1) * 100 if total_entry > 0 else 0.0
+
+    # ── Per-holding analysis ──────────────────────────────────────────────────
+    result_holdings: dict[str, dict] = {}
+
+    for sym in available:
+        if sym not in wide.columns:
+            continue
+
+        # Individual stock CAGR over the aligned backtest window
+        ep = float(entry_row[sym])
+        cp = float(exit_row[sym])
+        stock_total_return = (cp / ep - 1) if ep > 0 else 0.0
+        stock_cagr = (math.pow(1 + stock_total_return, 1 / n_years) - 1) * 100 if n_years > 0 else 0.0
+
+        cagr_vs_spy = stock_cagr - spy_cagr
+        # Weighted drag: how many bps this stock cost relative to SPY
+        drag_bps = cagr_vs_spy * weights[sym] * 100
+
+        # Counterfactual: replace only this stock with SPY
+        counterfactual_final = _port_value_at_exit(exclude_sym=sym, replace_with_spy=True)
+        counterfactual_return = (counterfactual_final / total_entry - 1) * 100 if total_entry > 0 else 0.0
+        swap_delta_pct = round(counterfactual_return - actual_total_return, 2)
+
+        # Verdict thresholds
+        if drag_bps < -30 or swap_delta_pct > 2.0:
+            verdict = "weak link"
+        elif drag_bps > 30 or swap_delta_pct < -2.0:
+            verdict = "contributor"
+        else:
+            verdict = "neutral"
+
+        result_holdings[sym] = {
+            "weight":         round(weights[sym] * 100, 1),   # % of portfolio
+            "stock_cagr":     round(stock_cagr, 2),
+            "spy_cagr":       round(spy_cagr, 2),
+            "cagr_vs_spy":    round(cagr_vs_spy, 2),
+            "drag_bps":       round(drag_bps, 1),
+            "swap_delta_pct": swap_delta_pct,
+            "verdict":        verdict,
+        }
+
+    # ── Ranking: worst drag first ─────────────────────────────────────────────
+    ranking = sorted(result_holdings.keys(),
+                     key=lambda s: result_holdings[s]["drag_bps"])
+
+    # Weakest = largest positive swap_delta (most improved if swapped for SPY)
+    weakest = max(result_holdings, key=lambda s: result_holdings[s]["swap_delta_pct"],
+                  default=None)
+    if weakest and result_holdings[weakest]["swap_delta_pct"] <= 0:
+        weakest = None  # every stock beat SPY — no weak link
+
+    return {
+        "spy_cagr":   round(spy_cagr, 2),
+        "port_cagr":  round(port_cagr, 2),
+        "gap_cagr":   gap_cagr,
+        "n_years":    round(n_years, 1),
+        "holdings":   result_holdings,
+        "ranking":    ranking,
+        "weakest":    weakest,
+        "error":      None,
+    }
+
+
 def run_simulation(portfolio_name: str) -> dict:
     """
     Load a portfolio by name, run backtest + Monte Carlo.

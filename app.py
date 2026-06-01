@@ -1,7 +1,7 @@
 """
 Graham Score App — Full Quant Version
 Pure Python / Dash with SEC EDGAR + Alpha Vantage
-Graham (40%) + Quality (35%) + Momentum (25%)
+Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)
 """
 
 import dash
@@ -26,6 +26,7 @@ import piotroski
 import altman
 import risk_metrics
 import greenblatt
+import buffett
 
 # ── App Init ──────────────────────────────────────────────────────────────────
 
@@ -116,9 +117,11 @@ def analyze_stock(symbol: str) -> dict:
 
     greenblatt_result = greenblatt.compute_single(price, sec_facts)
 
-    # Enhanced 6-factor composite
+    buffett_result = buffett.score(price, sec_facts)
+
+    # Enhanced 7-factor composite
     enhanced = scorer.enhanced_composite(
-        g, q, m_result, piotroski_result, risk_result, altman_result
+        g, q, m_result, piotroski_result, risk_result, altman_result, buffett_result
     )
 
     result = {
@@ -135,6 +138,7 @@ def analyze_stock(symbol: str) -> dict:
         "altman":      altman_result,
         "risk":        risk_result,
         "greenblatt":  greenblatt_result,
+        "buffett":     buffett_result,
         "enhanced":    enhanced,
         # ─────────────────────────────────────────────────
         "price_history": hist.to_dict() if hist is not None else None,
@@ -169,7 +173,7 @@ app.layout = html.Div(className="app-container", children=[
         html.Div("📊", className="app-header-icon"),
         html.Div(className="app-header-content", children=[
             html.H1("Graham Score — Quant Edition"),
-            html.P("Graham (40%) + Quality (35%) + Momentum (25%)")
+            html.P("Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)")
         ])
     ]),
 
@@ -419,23 +423,31 @@ def capture_screener_click(n_clicks_list):
 
 # ── Screener ──────────────────────────────────────────────────────────────────
 
-# In-memory portfolio cache — one disk read per 30s max regardless of render frequency
+# In-memory portfolio cache — guards against redundant reads within one render cycle
 _portfolio_cache: dict = {"symbols": {}, "ts": 0.0}
 
-def _get_portfolio_symbols() -> dict[str, str]:
-    """Return {symbol: portfolio_name}, refreshed at most every 30 seconds."""
+def _invalidate_portfolio_cache() -> None:
+    global _portfolio_cache
+    _portfolio_cache = {"symbols": {}, "ts": 0.0}
+
+def _get_portfolio_symbols() -> dict[str, list[str]]:
+    """Return {symbol: [portfolio_name, ...]}, cached for 10 seconds.
+    Always force-cleared by _invalidate_portfolio_cache() on any mutation."""
     import time as _t
     global _portfolio_cache
-    if _t.time() - _portfolio_cache["ts"] < 30:
+    if _t.time() - _portfolio_cache["ts"] < 10:
         return _portfolio_cache["symbols"]
-    result: dict[str, str] = {}
+    result: dict[str, list[str]] = {}
     try:
         for pname in (portfolio_engine.list_portfolios() or []):
-            port = portfolio_engine.get_portfolio(pname)
-            for h in (port.get("holdings") or []):
-                sym = h.get("symbol")
+            port = portfolio_engine.load_portfolio(pname)
+            if not port:
+                continue
+            for sym in (port.get("holdings") or {}).keys():
                 if sym:
-                    result[sym] = pname
+                    result.setdefault(sym, [])
+                    if pname not in result[sym]:
+                        result[sym].append(pname)
     except Exception:
         pass
     _portfolio_cache = {"symbols": result, "ts": _t.time()}
@@ -601,31 +613,37 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
         filtered = sorted(filtered, key=lambda r: r.get(sort_col) or 0, reverse=not sort_asc)
 
     SORT_COLS = [
-        ("#",           None),
-        ("Ticker",      "symbol"),
-        ("Company",     "name"),
-        ("Sector",      "sector"),
-        ("Graham ↕",    "graham_pct"),
-        ("Quality ↕",   "quality_pct"),
-        ("Composite ↕", "composite_score"),
-        ("Verdict",     None),
+        ("#",           None,               None),
+        ("Ticker",      "symbol",           "Stock ticker symbol. Click to run full analysis."),
+        ("Company",     "name",             "Company name."),
+        ("Sector",      "sector",           "Industry sector from SEC filings."),
+        ("Graham ↕",    "graham_pct",       "Graham score (0–100): valuation vs intrinsic value — P/E, P/B, Graham Number, current ratio, debt/equity, EPS stability, dividends. Weight: 15% in enhanced composite."),
+        ("Quality ↕",   "quality_pct",      "Quality score (0–100): business quality — ROE, EPS consistency, operating margin, free cash flow, revenue growth. Weight: 18% in enhanced composite."),
+        ("Composite ↕", "composite_score",  "Composite score (0–100): weighted blend of all scored pillars. Pre-analysis uses Graham+Quality only; run full analysis to include Buffett (25%), Momentum, Piotroski, Risk, and Altman Z."),
+        ("GN Price ↕",  "graham_number",    "Graham Number — intrinsic value estimate: √(22.5 × EPS × BVPS). Green = current price is below this number (margin of safety exists). Populated after running full analysis on a stock."),
+        ("Verdict",     None,               "Investment verdict based on composite score: STRONG BUY ≥75 · BUY ≥60 · WATCH ≥45 · HOLD ≥30 · AVOID <30. * = fundamentals only (momentum not yet loaded)."),
     ]
     header_cells = []
-    for label, sort_key in SORT_COLS:
+    for label, sort_key, tooltip in SORT_COLS:
+        th_style = {"cursor": "help", "borderBottom": f"1px dashed {MUTED}"} if tooltip else {}
         if sort_key:
-            header_cells.append(html.Th(html.Button(
-                label,
-                id={"type": "screener-sort-btn", "index": sort_key},
-                className="sort-header-btn", n_clicks=0,
-            )))
+            header_cells.append(html.Th(
+                html.Button(
+                    label,
+                    id={"type": "screener-sort-btn", "index": sort_key},
+                    className="sort-header-btn", n_clicks=0,
+                    title=tooltip or "",
+                ),
+                title=tooltip or "", style=th_style,
+            ))
         else:
-            header_cells.append(html.Th(label))
+            header_cells.append(html.Th(label, title=tooltip or "", style=th_style))
 
     rows = []
     for i, r in enumerate(filtered, 1):
         sym     = r["symbol"]
         viewed  = sym in viewed_set
-        in_port = sym in portfolio_symbols
+        in_port = bool(portfolio_symbols.get(sym))
 
         verdict       = r["verdict"]
         verdict_label = r["verdict_label"]
@@ -644,19 +662,11 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
                 "background": "#003318", "border": f"1px solid {GREEN}55",
                 "borderRadius": "4px", "padding": "1px 5px",
             }))
-        if in_port:
-            badges.append(html.Span(f"💼 {portfolio_symbols[sym]}", style={
+        port_list = portfolio_symbols.get(sym, [])
+        for pname in port_list:
+            badges.append(html.Span(f"💼 {pname}", style={
                 "fontSize": "10px", "color": AMBER,
                 "background": "#2a1e00", "border": f"1px solid {AMBER}55",
-                "borderRadius": "4px", "padding": "1px 5px",
-            }))
-        if r.get("analyzed") and r.get("graham_number"):
-            gn    = r["graham_number"]
-            price = r.get("price")
-            gc    = GREEN if (price and price <= gn) else MUTED
-            badges.append(html.Span(f"GN ${gn:.0f}", style={
-                "fontSize": "10px", "color": gc,
-                "background": DARK, "border": f"1px solid {BORDER}",
                 "borderRadius": "4px", "padding": "1px 5px",
             }))
 
@@ -667,6 +677,20 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
                                     "flexWrap": "wrap", "marginTop": "3px"})
             if badges else html.Div(),
         ]), className="ticker-cell")
+
+        # Graham Number cell — populated after full analysis
+        gn    = r.get("graham_number")
+        price = r.get("price")
+        if gn:
+            gn_color = GREEN if (price and price <= gn) else MUTED
+            gn_cell = html.Td(
+                html.Span(f"${gn:.0f}", style={"color": gn_color, "fontWeight": "600"}),
+                title=f"Graham Number ${gn:.2f}" + (f" · Price ${price:.2f}" if price else "") +
+                      (" · Price below GN ✓" if (price and price <= gn) else " · Price above GN"),
+            )
+        else:
+            gn_cell = html.Td("—", style={"color": MUTED, "fontSize": "12px"},
+                              title="Run full analysis to calculate Graham Number")
 
         row_style = {}
         if in_port:  row_style = {"borderLeft": f"3px solid {AMBER}"}
@@ -680,11 +704,12 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
             html.Td(html.Span(f"{r['graham_pct']:.0f}",      className=f"score-pill {get_score_class(r['graham_pct'])}")),
             html.Td(html.Span(f"{r['quality_pct']:.0f}",     className=f"score-pill {get_score_class(r['quality_pct'])}")),
             html.Td(html.Span(f"{r['composite_score']:.0f}", className=f"score-pill {get_score_class(r['composite_score'])}")),
+            gn_cell,
             html.Td(html.Span(verdict, className=f"verdict-pill {get_verdict_class(verdict_label)}")),
         ]))
 
     n_analyzed  = sum(1 for r in filtered if r.get("analyzed"))
-    n_portfolio = sum(1 for r in filtered if r["symbol"] in portfolio_symbols)
+    n_portfolio = sum(1 for r in filtered if portfolio_symbols.get(r["symbol"]))
     note = html.Div([
         html.Span(f"{len(filtered):,} stocks", style={"fontWeight": "600"}),
         html.Span(f" · {n_analyzed} analyzed · {n_portfolio} in portfolio"
@@ -764,13 +789,15 @@ def _composite_banner(data: dict) -> html.Div:
 
     # Pillar list
     if has_enh:
+        has_buffett = enhanced.get("buffett_pct") is not None
         pillars = [
-            ("Graham",    enhanced.get("graham_pct",    0), "25%"),
-            ("Quality",   enhanced.get("quality_pct",   0), "22%"),
-            ("Momentum",  enhanced.get("momentum_pct",  0), "18%"),
-            ("Piotroski", enhanced.get("piotroski_pct", 0), "18%"),
-            ("Risk",      enhanced.get("risk_pct",      0), "10%"),
-            ("Altman",    enhanced.get("altman_pct",    0), " 7%"),
+            ("Graham",    enhanced.get("graham_pct",    0), "15%"),
+            ("Buffett",   enhanced.get("buffett_pct",   0), "25%"),
+            ("Quality",   enhanced.get("quality_pct",   0), "18%"),
+            ("Momentum",  enhanced.get("momentum_pct",  0), "14%"),
+            ("Piotroski", enhanced.get("piotroski_pct", 0), "14%"),
+            ("Risk",      enhanced.get("risk_pct",      0), " 8%"),
+            ("Altman",    enhanced.get("altman_pct",    0), " 6%"),
         ]
         score_label = "Enhanced Score"
     else:
@@ -1032,20 +1059,33 @@ def _build_analysis_content(data: dict) -> list:
     p_data = data.get("piotroski") or {}
     a_data = data.get("altman")    or {}
     r_data = data.get("risk")      or {}
+    b_data = data.get("buffett")   or {}
 
     header = html.Div(className="company-header", children=[
         html.Div(className="company-header-left", children=[
             html.H2(name),
             html.Div(f"{symbol} · {sector}", className="company-meta"),
             html.Div(className="stats-row", children=[
-                _stat("Price",     f"${price:.2f}"                  if price                      else "N/A"),
-                _stat("P/E",       f"{g.get('pe', 0):.1f}×"        if g.get('pe')                else "N/A"),
-                _stat("P/B",       f"{g.get('pb', 0):.2f}×"        if g.get('pb')                else "N/A"),
-                _stat("ROE",       f"{q.get('roe', 0):.1f}%"       if q.get('roe')               else "N/A"),
-                _stat("Op Margin", f"{q.get('op_margin', 0):.1f}%" if q.get('op_margin')         else "N/A"),
-                _stat("Sharpe",    f"{r_data['sharpe']:.2f}"        if r_data.get('sharpe') is not None else "N/A"),
-                _stat("Beta",      f"{r_data['beta']:.2f}"          if r_data.get('beta')  is not None else "N/A"),
-                _stat("F-Score",   f"{p_data['f_score']}/9"         if p_data.get('f_score') is not None else "N/A"),
+                _stat("Price",     f"${price:.2f}"                  if price                      else "N/A",
+                      "Current market price per share."),
+                _stat("P/E",       f"{g.get('pe', 0):.1f}×"        if g.get('pe')                else "N/A",
+                      "Price-to-Earnings ratio. Graham's ceiling: 15×. Lower = cheaper relative to earnings."),
+                _stat("P/B",       f"{g.get('pb', 0):.2f}×"        if g.get('pb')                else "N/A",
+                      "Price-to-Book ratio. Graham's ceiling: 1.5×. Below 1.0 means trading below net asset value."),
+                _stat("ROE",       f"{q.get('roe', 0):.1f}%"       if q.get('roe')               else "N/A",
+                      "Return on Equity — net income ÷ shareholders' equity. Target: ≥15%. Measures how efficiently management generates profit from equity."),
+                _stat("Op Margin", f"{q.get('op_margin', 0):.1f}%" if q.get('op_margin')         else "N/A",
+                      "Operating Margin — operating income ÷ revenue. Target: ≥15%. Reflects pricing power and cost efficiency."),
+                _stat("Sharpe",    f"{r_data['sharpe']:.2f}"        if r_data.get('sharpe') is not None else "N/A",
+                      "Sharpe Ratio — annualised excess return ÷ volatility (vs 4.5% risk-free rate). ≥1.0 = good, ≥1.5 = excellent. Measures risk-adjusted return."),
+                _stat("Beta",      f"{r_data['beta']:.2f}"          if r_data.get('beta')  is not None else "N/A",
+                      "Beta vs SPY — measures market sensitivity. 1.0 = moves with market. <0.7 = defensive. >1.3 = amplified swings."),
+                _stat("F-Score",   f"{p_data['f_score']}/9"         if p_data.get('f_score') is not None else "N/A",
+                      "Piotroski F-Score (0–9): 9-point accounting health check. 8–9 = strong, 5–7 = neutral, 0–4 = weak. Filters value traps."),
+                _stat("Buffett IV", f"${b_data['intrinsic_value']:.2f}" if b_data.get("intrinsic_value") else "N/A",
+                      "Buffett Intrinsic Value: 10-yr two-stage DCF on owner earnings (FCF/share or EPS), 12% discount rate, 3% terminal growth. Compare to current price for margin of safety."),
+                _stat("Moat",      f"{b_data['grade']} ({b_data['grade_label']})" if b_data.get("grade") else "N/A",
+                      "Buffett moat grade: A=Wide Moat, B=Narrow Moat, C=No Clear Moat, D=Avoid. Based on ROE consistency, margins, FCF, ROIC, and intrinsic value."),
             ])
         ]),
         html.Div(className="grade-badge", children=[
@@ -1060,6 +1100,8 @@ def _build_analysis_content(data: dict) -> list:
 
     graham_card   = _render_scorecard("Graham Value Analysis", g["criteria"], "graham")
     quality_card  = _render_scorecard("Quality Analysis",      q["criteria"], "quality")
+    buffett_card  = (_render_scorecard("Buffett Quality & Value", b_data["criteria"], "buffett")
+                     if b_data.get("criteria") else html.Div())
     momentum_card = (_render_scorecard("Momentum Analysis", m["criteria"], "momentum")
                      if m.get("criteria") else html.Div())
 
@@ -1081,11 +1123,14 @@ def _build_analysis_content(data: dict) -> list:
 
     div_chart      = _div_chart(g.get("div_history", []), symbol)
     graham_details = _graham_details_card(g)
+    buffett_details = _buffett_details_card(data)
 
     return [header, banner,
-            graham_card, quality_card, momentum_card,
+            graham_card, buffett_card, quality_card, momentum_card,
             quant_row, risk_card,
-            charts_row, div_chart, graham_details]
+            charts_row, div_chart,
+            html.Div(style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "16px"},
+                     children=[graham_details, buffett_details])]
 
 
 @callback(
@@ -1128,6 +1173,10 @@ def run_analysis(n_clicks, clicked_ticker, ticker_input_value, viewed_list):
 
     viewed_updated = list(set((viewed_list or []) + [symbol]))
     content = _build_analysis_content(result)
+
+    # Update screener row with full analysis data (Graham Number, live price, enhanced score)
+    screener.update_stock_after_analysis(symbol, result)
+
     return (
         content,
         result,
@@ -1141,9 +1190,11 @@ def run_analysis(n_clicks, clicked_ticker, ticker_input_value, viewed_list):
 
 # ── UI Components ─────────────────────────────────────────────────────────────
 
-def _stat(label, value):
+def _stat(label, value, tooltip=None):
     return html.Div([
-        html.Div(label, className="stat-label"),
+        html.Div(label, className="stat-label",
+                 title=tooltip or "",
+                 style={"cursor": "help", "borderBottom": f"1px dashed {MUTED}"} if tooltip else {}),
         html.Div(value, className="stat-value")
     ], className="stat-item")
 
@@ -1321,6 +1372,42 @@ def _graham_details_card(data: dict) -> html.Div:
     ])
 
 
+def _buffett_details_card(data: dict) -> html.Div:
+    b = data.get("buffett") or {}
+    iv  = b.get("intrinsic_value")
+    mos = b.get("margin_of_safety")
+    price = b.get("price")
+
+    rows = [
+        ("Grade",             f"{b.get('grade', 'N/A')} — {b.get('grade_label', '')}"),
+        ("Intrinsic Value",   f"${iv:.2f} ({b.get('iv_base', '')})" if iv else "N/A"),
+        ("Margin of Safety",  f"{mos:.1f}%" if mos is not None else "N/A"),
+        ("ROE (latest)",      f"{b.get('roe_latest', 0):.1f}%" if b.get("roe_latest") else "N/A"),
+        ("ROE ≥15% years",    f"{b.get('n_roe_above15', 0)}/{b.get('n_roe_years', 0)}"),
+        ("Net Margin",        f"{b.get('net_margin', 0):.1f}%" if b.get("net_margin") else "N/A"),
+        ("EPS CAGR",          f"{b.get('eps_cagr', 0):.1f}%/yr" if b.get("eps_cagr") is not None else "N/A"),
+        ("FCF",               f"${b.get('fcf_latest', 0):.1f}B" if b.get("fcf_latest") is not None else "N/A"),
+        ("ROIC",              f"{b.get('roic', 0):.1f}%" if b.get("roic") else "N/A"),
+        ("Debt Payback",      f"{b.get('de_years', 0):.1f}yr" if b.get("de_years") is not None else "N/A"),
+    ]
+
+    iv_color = GREEN if mos and mos > 0 else RED
+
+    detail_rows = [
+        html.Div(className="detail-row", children=[
+            html.Span(label, className="detail-label"),
+            html.Span(value, className="detail-value",
+                      style={"color": iv_color if label == "Margin of Safety" else TEXT}),
+        ])
+        for label, value in rows
+    ]
+
+    return html.Div(className="detail-card", children=[
+        html.Div("Buffett DCF Details", className="card-header"),
+        html.Div(detail_rows)
+    ])
+
+
 def _chart_layout(title: str, many_traces: bool = False) -> dict:
     """
     many_traces=True: vertical legend anchored top-right outside the plot.
@@ -1439,6 +1526,7 @@ def delete_portfolio(n, active, refresh):
     if not n or not active:
         return dash.no_update, dash.no_update, dash.no_update
     portfolio_engine.delete_portfolio(active)
+    _invalidate_portfolio_cache()
     return (refresh or 0) + 1, None, f"🗑 Portfolio '{active}' deleted."
 
 
@@ -1490,6 +1578,7 @@ def add_to_portfolio(n, selected, new_name, shares, symbol, analysis, refresh):
         return f"❌ {err}", {"color": RED}, dash.no_update, dash.no_update
 
     portfolio_engine.invalidate_simulation_cache(port_name)
+    _invalidate_portfolio_cache()
     p = portfolio_engine.load_portfolio(port_name)
     count = len(p["holdings"])
     msg = f"✅ Added {shares}× {symbol} to '{port_name}' ({count}/{portfolio_engine.MAX_HOLDINGS} stocks)"
@@ -1535,6 +1624,18 @@ def render_portfolio_holdings(active, refresh):
         for sym, h in holdings.items():
             invested = h["shares"] * h["price_at_add"]
             weight   = invested / total_invested * 100 if total_invested > 0 else 0
+
+            # Pull Sharpe from cached analysis if available
+            sharpe_val = None
+            cached_analysis = cache.read("analysis", sym)
+            if cached_analysis:
+                sharpe_val = (cached_analysis.get("risk") or {}).get("sharpe")
+            sharpe_str = f"{sharpe_val:.2f}" if sharpe_val is not None else "—"
+            sharpe_color = GREEN if (sharpe_val is not None and sharpe_val >= 1.0) else (
+                AMBER if (sharpe_val is not None and sharpe_val >= 0) else RED
+                if sharpe_val is not None else MUTED
+            )
+
             rows.append(html.Tr([
                 html.Td(sym, style={"fontWeight": "600", "color": BLUE}),
                 html.Td(h["name"][:28], style={"fontSize": "12px", "color": MUTED}),
@@ -1570,6 +1671,7 @@ def render_portfolio_holdings(active, refresh):
                 html.Td(f"${h['price_at_add']:.2f}" if h["price_at_add"] else "N/A"),
                 html.Td(f"${invested:,.2f}", id={"type": "invested-cell", "index": f"{active}|{sym}"}),
                 html.Td(f"{weight:.1f}%"),
+                html.Td(sharpe_str, title="Sharpe Ratio from last full analysis. ≥1.0 = good risk-adjusted return.", style={"color": sharpe_color, "fontWeight": "600"}),
                 html.Td(
                     html.Button("✕", n_clicks=0,
                                 id={"type": "remove-holding-btn", "index": f"{active}|{sym}"},
@@ -1581,7 +1683,9 @@ def render_portfolio_holdings(active, refresh):
         table = html.Table(className="screener-table", children=[
             html.Thead(html.Tr([
                 html.Th("Ticker"), html.Th("Company"), html.Th("Shares"),
-                html.Th("Price Added"), html.Th("Invested"), html.Th("Weight"), html.Th(""),
+                html.Th("Price Added"), html.Th("Invested"), html.Th("Weight"),
+                html.Th("Sharpe", title="Sharpe Ratio (risk-adjusted return) from last full analysis. ≥1.0 = good, ≥1.5 = excellent. '—' = stock not yet analyzed.", style={"cursor": "help", "borderBottom": f"1px dashed {MUTED}"}),
+                html.Th(""),
             ])),
             html.Tbody(rows),
         ])
@@ -1624,6 +1728,7 @@ def remove_holding(n_clicks_list, refresh):
     port_name, symbol = triggered["index"].split("|", 1)
     portfolio_engine.remove_holding(port_name, symbol)
     portfolio_engine.invalidate_simulation_cache(port_name)
+    _invalidate_portfolio_cache()
     return (refresh or 0) + 1
 
 
@@ -1847,6 +1952,118 @@ def run_simulation(n, active, compare):
                 ]),
             ]))
 
+        # ── Weak-link analysis ─────────────────────────────────────────────
+        if not bt.get("error"):
+            p_obj = portfolio_engine.load_portfolio(port_name)
+            if p_obj:
+                wl = portfolio_engine.analyze_weak_links(p_obj, bt)
+                if wl.get("error"):
+                    components.append(html.Div(
+                        f"⚠️  Weak-link analysis unavailable: {wl['error']}",
+                        style={"color": MUTED, "fontSize": "13px", "padding": "8px 4px"}
+                    ))
+                else:
+                    gap      = wl["gap_cagr"]
+                    gap_col  = GREEN if gap >= 0 else RED
+                    gap_text = (
+                        f"Portfolio CAGR {wl['port_cagr']:+.1f}%  vs  "
+                        f"SPY {wl['spy_cagr']:+.1f}%  —  {gap:+.2f}% / yr gap "
+                        f"over {wl['n_years']:.1f} yr"
+                    )
+
+                    # Banner: weakest link callout OR all-clear
+                    if wl.get("weakest"):
+                        ws  = wl["weakest"]
+                        wd  = wl["holdings"][ws]
+                        banner = html.Div(
+                            f"⚠️  Weakest link: {ws} — "
+                            f"replacing it with SPY would have improved total returns "
+                            f"by +{wd['swap_delta_pct']:.2f}%",
+                            style={
+                                "background": "rgba(239,83,80,0.10)",
+                                "border": f"1px solid {RED}",
+                                "borderRadius": "6px",
+                                "padding": "8px 14px",
+                                "marginBottom": "12px",
+                                "color": RED,
+                                "fontSize": "13px",
+                                "fontWeight": "600",
+                            }
+                        )
+                    else:
+                        banner = html.Div(
+                            "✅  No weak links — every holding beat SPY over the backtest period.",
+                            style={
+                                "background": "rgba(102,187,106,0.10)",
+                                "border": f"1px solid {GREEN}",
+                                "borderRadius": "6px",
+                                "padding": "8px 14px",
+                                "marginBottom": "12px",
+                                "color": GREEN,
+                                "fontSize": "13px",
+                                "fontWeight": "600",
+                            }
+                        )
+
+                    # Per-holding rows — worst to best (ranking is worst-first)
+                    wl_rows = []
+                    for sym in wl["ranking"]:
+                        d       = wl["holdings"][sym]
+                        verdict = d["verdict"]
+                        v_col   = (RED   if verdict == "weak link"   else
+                                   GREEN if verdict == "contributor" else MUTED)
+                        v_icon  = ("⚠️"  if verdict == "weak link"   else
+                                   "✅" if verdict == "contributor" else "—")
+                        wl_rows.append(html.Tr([
+                            html.Td(sym,
+                                    style={"fontWeight": "600", "color": BLUE}),
+                            html.Td(f"{d['weight']:.1f}%"),
+                            html.Td(f"{d['stock_cagr']:+.1f}%",
+                                    style={"color": GREEN if d["stock_cagr"] >= 0 else RED}),
+                            html.Td(f"{d['cagr_vs_spy']:+.1f}%",
+                                    style={"color": GREEN if d["cagr_vs_spy"] >= 0 else RED}),
+                            html.Td(f"{d['drag_bps']:+.1f}",
+                                    style={"color": GREEN if d["drag_bps"] >= 0 else RED}),
+                            html.Td(f"{d['swap_delta_pct']:+.2f}%",
+                                    style={"color": GREEN if d["swap_delta_pct"] <= 0 else RED}),
+                            html.Td(
+                                f"{v_icon} {verdict}",
+                                style={"color": v_col, "fontWeight": "600"}
+                            ),
+                        ]))
+
+                    components.append(html.Div(className="scorecard", children=[
+                        html.Div("🔍 Weak Link Analysis", className="scorecard-header"),
+                        html.Div(gap_text, style={
+                            "color": gap_col, "fontSize": "13px",
+                            "marginBottom": "14px", "padding": "0 4px",
+                        }),
+                        banner,
+                        html.Table(className="screener-table", children=[
+                            html.Thead(html.Tr([
+                                html.Th("Ticker"),
+                                html.Th("Weight"),
+                                html.Th("Stock CAGR"),
+                                html.Th("vs SPY"),
+                                html.Th("Drag (bps)"),
+                                html.Th("Swap Δ"),
+                                html.Th("Verdict"),
+                            ])),
+                            html.Tbody(wl_rows),
+                        ]),
+                        html.Div(
+                            "Table sorted worst-to-best.  "
+                            "Drag (bps): weighted annualised underperformance vs SPY (negative = drag).  "
+                            "Swap Δ: total-return change if this stock were replaced with SPY "
+                            "(positive = stock was a drag; negative = stock beat SPY).",
+                            style={
+                                "fontSize": "11px", "color": MUTED,
+                                "marginTop": "10px", "padding": "0 4px",
+                                "lineHeight": "1.6",
+                            }
+                        ),
+                    ]))
+
         return components
 
     PALETTE = [BLUE, GREEN, AMBER, "#e040fb", "#00bcd4"]
@@ -1873,7 +2090,7 @@ def run_simulation(n, active, compare):
 def startup():
     print("\n🚀 Graham Score — Quant Edition")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("Graham (40%) + Quality (35%) + Momentum (25%)")
+    print("Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)")
     print("SEC EDGAR (free) + Alpha Vantage (free)\n")
 
     sec_data.get_ticker_map()
@@ -1886,4 +2103,4 @@ def startup():
 startup()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8050)
+    app.run(host="0.0.0.0",debug=True, port=8050)

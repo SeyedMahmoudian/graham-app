@@ -789,7 +789,7 @@ body {
   gap: 16px;
   margin-bottom: 16px;
 
-  @media (max-width: 900px) {
+  @media (max-width: 767px) {
     grid-template-columns: 1fr;
   }
 
@@ -1004,4 +1004,255 @@ body {
       transform: translate(67%, 0px);
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// RESPONSIVE
+// ─────────────────────────────────────────────────────────────
+
+$tablet: 1024px;
+$mobile: 768px;
+$small-mobile: 480px;
+
+// Global responsive media
+img,
+svg,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+// Tables
+.screener-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.screener-table {
+  min-width: 100%;
+
+}
+
+// Graphs
+.dash-graph,
+.js-plotly-plot {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+.js-plotly-plot{
+  height: 500px;
+  min-height: 500px;
+  max-height: 500px;
+}
+
+// Tablet
+@media (max-width: $tablet) {
+
+  .app-container {
+    padding: 0 16px 40px;
+  }
+
+  .company-header,
+  .composite-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .grade-badge {
+    width: 100%;
+  }
+
+  .pillar-scores {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .criterion-row {
+    align-items: flex-start;
+  }
+
+  .score-bar {
+    max-width: 100%;
+  }
+}
+
+// Mobile
+@media (max-width: $mobile) {
+
+  html,
+  body {
+    font-size: 13px;
+  }
+
+  .app-container {
+    padding: 0 12px 32px;
+  }
+
+  // Header
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+
+    .app-header-content h1 {
+      font-size: 18px;
+    }
+  }
+
+  // Tabs
+  .tab-bar {
+    overflow-x: auto;
+    white-space: nowrap;
+
+    .tab-btn {
+      flex-shrink: 0;
+      padding: 12px 16px;
+    }
+  }
+
+  // Toolbar
+  .screener-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .screener-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .load-btn {
+    width: 100%;
+  }
+
+  // Search
+  .search-container {
+    max-width: 100%;
+  }
+
+  .search-input-wrapper {
+    flex-direction: column;
+  }
+
+  .ticker-input {
+    width: 100%;
+  }
+
+  .analyze-btn {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid $border-glow;
+  }
+
+  // Stats
+  .stats-row {
+    flex-direction: column;
+  }
+
+  .stats-row .stat-item {
+    border-right: none;
+    border-bottom: 1px solid $border;
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  // Company header
+  .company-header {
+    padding: 16px;
+  }
+
+  .company-header h2 {
+    font-size: 18px;
+  }
+
+  // Composite banner
+  .composite-banner {
+    padding: 16px;
+  }
+
+  .composite-banner-verdict {
+    font-size: 22px;
+  }
+
+  .composite-banner-desc {
+    max-width: 100%;
+  }
+
+  .pillar-scores {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  // Detail rows
+  .detail-row,
+  .criterion-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .criterion-pts {
+    text-align: left;
+  }
+
+  // Portfolio
+  .portfolio-add-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .portfolio-stats-row {
+    flex-direction: column;
+  }
+
+  // Plotly
+  .dash-graph {
+    height: auto !important;
+    min-height: 350px;
+  }
+}
+
+// Very small phones
+@media (max-width: $small-mobile) {
+
+  .app-header-content h1 {
+    font-size: 16px;
+  }
+
+  .composite-banner-verdict {
+    font-size: 18px;
+  }
+
+  .pillar-scores {
+    grid-template-columns: 1fr;
+  }
+
+  .score-pill,
+  .verdict-pill {
+    font-size: 10px;
+  }
+
+  .empty-card {
+    padding: 24px 16px;
+  }
+}
+
+.quantRow {
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+
+  @media (max-width: $mobile) {
+    flex-direction: column;
+  }
+}
+
+.js-plotly-plot .plotly {
+  touch-action: pan-y !important;
+}
+
+.js-plotly-plot {
+  touch-action: pan-y !important;
 }

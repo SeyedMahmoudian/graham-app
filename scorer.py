@@ -118,12 +118,14 @@ def fundamental_only(graham_result: dict, quality_result: dict) -> dict:
 # Altman also acts as a HARD CAP: distress zone stocks cannot exceed 50/100.
 
 ENHANCED_WEIGHTS = {
-    "graham":    0.25,
-    "quality":   0.22,
-    "momentum":  0.18,
-    "piotroski": 0.18,
-    "risk":      0.10,
-    "altman":    0.07,
+    "graham":    0.15,   # was 0.25; reduced to make room for Buffett
+    "buffett":   0.25,   # new: quality + moat + DCF intrinsic value
+    "quality":   0.18,   # was 0.22
+    "momentum":  0.14,   # was 0.18
+    "piotroski": 0.14,   # was 0.18
+    "risk":      0.08,   # was 0.10
+    "altman":    0.06,   # was 0.07
+    # Sum = 1.00
 }
 
 ENHANCED_VERDICTS = [
@@ -142,9 +144,11 @@ def enhanced_composite(
     piotroski_result: dict,
     risk_result:      dict,
     altman_result:    dict,
+    buffett_result:   dict | None = None,
 ) -> dict:
     """
-    Six-factor composite score.
+    Seven-factor composite score (six factors when buffett_result is None for
+    backward-compatibility with older cached analyses).
 
     All input dicts are the return values of their respective score() functions:
       graham_result    → graham.score()
@@ -153,6 +157,7 @@ def enhanced_composite(
       piotroski_result → piotroski.score()
       risk_result      → risk_metrics.score()
       altman_result    → altman.score()
+      buffett_result   → buffett.score()  (optional; defaults to neutral 50)
 
     Returns a dict with composite_score (0-100), verdict, and per-pillar
     percentages, compatible with display in app.py.
@@ -170,10 +175,12 @@ def enhanced_composite(
     f_pct  = (piotroski_result.get("f_score", 0) / 9 * 100)  # 0-9 scale
     r_pct  = _pct(risk_result, "risk_score", "risk_score_max")
     a_pct  = altman_result.get("risk_score", 50)              # 0-100 already
+    b_pct  = _pct(buffett_result) if buffett_result else 50   # neutral fallback
 
     # ── Weighted sum ──────────────────────────────────────────────────────────
     raw_score = (
         g_pct  * ENHANCED_WEIGHTS["graham"]    +
+        b_pct  * ENHANCED_WEIGHTS["buffett"]   +
         q_pct  * ENHANCED_WEIGHTS["quality"]   +
         m_pct  * ENHANCED_WEIGHTS["momentum"]  +
         f_pct  * ENHANCED_WEIGHTS["piotroski"] +
@@ -206,15 +213,17 @@ def enhanced_composite(
         piotroski_result.get("f_score", 5) <= 3
     )
 
-    # ── Quality flag: high Piotroski + high Quality = compounding machine ─────
+    # ── Quality flag: high Piotroski + high Quality + high Buffett ───────────
     compounder_flag = (
         piotroski_result.get("f_score", 0) >= 7 and
-        q_pct >= 65
+        q_pct >= 65 and
+        b_pct >= 60
     )
 
     return {
         # Pillar percentages
         "graham_pct":      round(g_pct, 1),
+        "buffett_pct":     round(b_pct, 1),
         "quality_pct":     round(q_pct, 1),
         "momentum_pct":    round(m_pct, 1),
         "piotroski_pct":   round(f_pct, 1),
