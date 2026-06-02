@@ -79,7 +79,12 @@ def _score_one(symbol: str) -> dict | None:
         if not cached_sec:
             _sec_rate_wait()
             cached_sec = sec_data.fetch_company_facts(symbol)
-            cache.write("sec_facts", symbol, cached_sec)
+            # Defer cache write to background thread (non-blocking)
+            threading.Thread(
+                target=cache.write, 
+                args=("sec_facts", symbol, cached_sec),
+                daemon=True
+            ).start()
 
         g    = graham.score(None, cached_sec)
         q    = quality.score(cached_sec)

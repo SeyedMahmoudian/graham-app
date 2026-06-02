@@ -11,6 +11,9 @@ import pandas as pd
 import json
 import shutil
 from pathlib import Path
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
 
 import cache
 import sec_data
@@ -44,6 +47,15 @@ DARK, CARD, BORDER, GREEN, RED, AMBER, BLUE, TEXT, MUTED = (
     "#0f1117", "#1a1d27", "#2a2d3e", "#00c853", "#ff1744",
     "#ffc107", "#448aff", "#e0e0e0", "#9e9e9e"
 )
+
+# ── Performance Optimization: Module-level caches ─────────────────────────────
+_spy_history = None
+_spy_history_lock = threading.Lock()
+
+_analysis_cache = {}
+_analysis_cache_lock = threading.Lock()
+
+_last_screener_state = None
 
 # ── Moat grade tooltips (shown on hover in Buffett badge) ────────────────────
 
@@ -84,13 +96,45 @@ _last_progress_bar_state = None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _get_spy_history_lazy():
+    """Fetch SPY history once at startup, cache it module-level. Subsequent calls are instant."""
+    global _spy_history
+    if _spy_history is not None:
+        return _spy_history
+    
+    with _spy_history_lock:
+        if _spy_history is not None:  # Double-check after acquiring lock
+            return _spy_history
+        try:
+            _spy_history = alpha_vantage_client.get_price_history("SPY", years=10)
+        except Exception as e:
+            print(f"Failed to fetch SPY history: {e}")
+            _spy_history = None  # Cache failure so we don't retry every time
+        return _spy_history
+
 def analyze_stock(symbol: str) -> dict:
-    """Full pipeline: SEC → Graham + Quality + (Price→Momentum) → Composite."""
+    """Full pipeline: SEC → Graham + Quality + (Price→Momentum) → Composite.
+    
+    Optimizations:
+    - 1A: In-memory cache for repeat lookups
+    - 1G: Eliminate redundant graham.score(None, ...) call
+    - 1B: Parallelize network fetches with ThreadPoolExecutor
+    - 1C: Lazy-load SPY history once, reuse across all stocks
+    """
+    global _analysis_cache, _analysis_cache_lock
+    
     symbol = symbol.upper().strip()
 
-    # Try cache
+    # 1A: Check in-memory cache first (zero disk I/O for repeat lookups)
+    with _analysis_cache_lock:
+        if symbol in _analysis_cache:
+            return _analysis_cache[symbol]
+
+    # Then try disk cache
     cached = cache.read("analysis", symbol)
     if cached:
+        with _analysis_cache_lock:
+            _analysis_cache[symbol] = cached
         return cached
 
     # Fetch SEC fundamentals
@@ -101,10 +145,7 @@ def analyze_stock(symbol: str) -> dict:
     except Exception as e:
         return {"error": f"SEC EDGAR error: {e}"}
 
-    # Graham score (no price)
-    g = graham.score(None, sec_facts)
-
-    # Quality score (no price)
+    # Quality score (no price) — early calculation
     q = quality.score(sec_facts)
 
     # Now try to get price
@@ -112,16 +153,27 @@ def analyze_stock(symbol: str) -> dict:
     hist = None
     spy_hist = None
     
+    # 1B: Parallelize price history fetches with ThreadPoolExecutor
     if price:
-        # Recalculate Graham WITH price
-        g = graham.score(price, sec_facts)
-        
-        # Fetch price history for charts (do this early to cache it)
-        try:
-            hist = alpha_vantage_client.get_price_history(symbol, years=10)
-            spy_hist = alpha_vantage_client.get_price_history("SPY", years=10)
-        except Exception as e:
-            print(f"Price history fetch failed: {e}")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Fetch stock history + use lazy-loaded SPY history
+            hist_future = executor.submit(
+                alpha_vantage_client.get_price_history, symbol, 10
+            )
+            spy_hist_future = executor.submit(_get_spy_history_lazy)
+            
+            try:
+                hist = hist_future.result(timeout=30)
+            except Exception as e:
+                print(f"Price history fetch failed for {symbol}: {e}")
+            
+            try:
+                spy_hist = spy_hist_future.result(timeout=30)
+            except Exception as e:
+                print(f"SPY history fetch failed: {e}")
+
+    # 1G: Calculate Graham score WITH price (if available), eliminating redundant call
+    g = graham.score(price, sec_facts) if price else graham.score(None, sec_facts)
 
     # Momentum score (needs price history)
     m_result = {"total_score": 0, "total_max": 100, "criteria": []}
@@ -176,7 +228,13 @@ def analyze_stock(symbol: str) -> dict:
         "spy_history": spy_hist.to_dict() if spy_hist is not None else None,
     }
 
+    # 1F: Defer cache writes to daemon thread (already handled in screener.py)
     cache.write("analysis", symbol, result)
+    
+    # 1A: Update in-memory cache
+    with _analysis_cache_lock:
+        _analysis_cache[symbol] = result
+    
     return result
 
 
@@ -392,6 +450,7 @@ app.layout = html.Div(className="app-container", children=[
     dcc.Store(id="screener-cache"),
     dcc.Store(id="analysis-store"),
     dcc.Store(id="screener-sort-store", data={"col": "composite_score", "asc": False}),
+    dcc.Store(id="screener-page-store", data=0),  # 1D: pagination — current page (0-indexed)
     dcc.Store(id="search-history-store"),
     dcc.Store(id="screener-click-ticker"),   # symbol clicked in screener table
     dcc.Store(id="portfolio-refresh-store", data=0),  # increment to trigger refresh
@@ -587,30 +646,47 @@ def update_progress_bar(n):
 @callback(
     Output("screener-table-container", "children"),
     Output("sector-filter", "options"),
+    Output("screener-page-store", "data"),
     Input("screener-ready-store",  "data"),
     Input("page-load-interval",    "n_intervals"),
     Input("sector-filter",         "value"),
     Input("screener-sort-store",   "data"),
     Input("screener-viewed-store", "data"),
+    State("screener-page-store",   "data"),
     prevent_initial_call=False
 )
-def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data):
-    global _last_screener_results
+def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data, current_page):
+    global _last_screener_state
     # Always allow a fresh render on page-load trigger so a browser refresh
     # never gets stuck behind a stale dedup-cache value.
     if dash.ctx.triggered_id == "page-load-interval":
-        _last_screener_results = None
+        _last_screener_state = None
 
     results    = screener.get_screener_results()
     prog       = screener.get_progress()
     viewed_set = frozenset(viewed_data or [])
     sort_col   = (sort_state or {}).get("col", "composite_score")
     sort_asc   = (sort_state or {}).get("asc", False)
+    current_page = current_page or 0
 
-    state_key = (len(results), sector_filter or "", sort_col, sort_asc, viewed_set)
-    if state_key == _last_screener_results:
-        return dash.no_update, dash.no_update
-    _last_screener_results = state_key
+    # Reset page to 0 when filters/sorts change
+    if dash.ctx.triggered_id in ["sector-filter", "screener-sort-store"]:
+        current_page = 0
+
+    # 1E: Smart state key using MD5 hash of results for guaranteed deduplication
+    state_tuple = (
+        json.dumps([r["symbol"] for r in results], sort_keys=True),
+        sector_filter or "",
+        sort_col,
+        sort_asc,
+        sorted(viewed_set),
+        current_page
+    )
+    state_hash = hashlib.md5(json.dumps(state_tuple).encode()).hexdigest()
+    
+    if state_hash == _last_screener_state:
+        return dash.no_update, dash.no_update, dash.no_update
+    _last_screener_state = state_hash
 
     sectors = sorted(set(r["sector"] for r in results if r.get("sector")))
     sector_options = [{"label": "All Sectors", "value": ""}] + [
@@ -627,11 +703,13 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
                              style={"color": MUTED, "fontSize": "13px"}),
                 ], style={"textAlign": "center", "padding": "40px"}),
                 sector_options,
+                current_page,
             )
         return (
             html.Div("Click 'Load Universe' to start analysis",
                      style={"textAlign": "center", "padding": "40px", "color": MUTED}),
             sector_options,
+            current_page,
         )
 
     portfolio_symbols = _get_portfolio_symbols()
@@ -673,7 +751,20 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
             header_cells.append(html.Th(label, title=tooltip or "", style=th_style))
 
     rows = []
-    for i, r in enumerate(filtered, 1):
+    # 1D: Server-side pagination — 50 rows per page
+    PAGE_SIZE = 50
+    total_rows = len(filtered)
+    total_pages = (total_rows + PAGE_SIZE - 1) // PAGE_SIZE
+    
+    # Ensure current_page is within bounds
+    current_page = max(0, min(current_page, total_pages - 1)) if total_pages > 0 else 0
+    
+    # Calculate slice for current page
+    start_idx = current_page * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+    page_filtered = filtered[start_idx:end_idx]
+    
+    for i, r in enumerate(page_filtered, start_idx + 1):
         sym     = r["symbol"]
         viewed  = sym in viewed_set
         in_port = bool(portfolio_symbols.get(sym))
@@ -763,8 +854,50 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data)
         html.Tbody(rows),
     ])
 
-    return html.Div([table, note]), sector_options
+    # 1D: Build pagination controls
+    pagination_controls = html.Div(className="pagination-controls", style={
+        "display": "flex", "justifyContent": "space-between", "alignItems": "center",
+        "marginTop": "16px", "padding": "8px", "fontSize": "13px", "color": MUTED
+    }, children=[
+        html.Button(
+            "← Prev",
+            id="screener-page-prev",
+            n_clicks=0,
+            disabled=current_page == 0,
+            style={"padding": "4px 12px", "cursor": "pointer" if current_page > 0 else "default"}
+        ),
+        html.Span(f"Page {current_page + 1} of {max(1, total_pages)} · Showing {len(page_filtered)} rows"),
+        html.Button(
+            "Next →",
+            id="screener-page-next",
+            n_clicks=0,
+            disabled=current_page >= total_pages - 1,
+            style={"padding": "4px 12px", "cursor": "pointer" if current_page < total_pages - 1 else "default"}
+        ),
+    ])
 
+    return html.Div([table, note, pagination_controls]), sector_options, current_page
+
+
+# ── 1D: Screener pagination controls ──────────────────────────────────────────
+
+@callback(
+    Output("screener-page-store", "data"),
+    Input("screener-page-prev", "n_clicks"),
+    Input("screener-page-next", "n_clicks"),
+    State("screener-page-store", "data"),
+    prevent_initial_call=True
+)
+def handle_pagination(prev_clicks, next_clicks, current_page):
+    triggered = dash.ctx.triggered_id
+    current_page = current_page or 0
+    
+    if triggered == "screener-page-prev" and current_page > 0:
+        return current_page - 1
+    elif triggered == "screener-page-next":
+        return current_page + 1
+    
+    return current_page
 
 
 # ── Screener column sort ──────────────────────────────────────────────────────
