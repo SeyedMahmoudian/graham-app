@@ -4,6 +4,8 @@ Pure Python / Dash with SEC EDGAR + Alpha Vantage
 Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)
 """
 
+import traceback
+
 import dash
 from dash import dcc, html, Input, Output, State, callback
 import plotly.graph_objects as go
@@ -14,7 +16,7 @@ from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
-
+import functools
 import cache
 import sec_data
 import graham
@@ -40,7 +42,31 @@ app = dash.Dash(
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}]
 )
 server = app.server
+@server.after_request
+def _log_errors(response):
+    return response
 
+# Patch Dash's internal callback handler to log exceptions
+
+_orig_dispatch = app.server.dispatch_request if hasattr(app.server, 'dispatch_request') else None
+
+_orig_cb = dash.Dash.callback
+
+def _logging_callback(self, *args, **kwargs):
+    decorator = _orig_cb(self, *args, **kwargs)
+    def wrap(func):
+        @functools.wraps(func)
+        def inner(*a, **kw):
+            try:
+                return func(*a, **kw)
+            except Exception:
+                print(f"\n[CALLBACK ERROR] in {func.__name__}", flush=True)
+                traceback.print_exc()
+                raise
+        return decorator(inner)
+    return wrap
+
+dash.Dash.callback = _logging_callback
 # ── Mobile touch fix: eliminate 300ms tap delay on all buttons ───────────────
 app.index_string = app.index_string.replace(
     '</head>',
@@ -454,7 +480,7 @@ app.layout = html.Div(className="app-container", children=[
     dcc.Store(id="screener-cache"),
     dcc.Store(id="analysis-store"),
     dcc.Store(id="screener-sort-store", data={"col": "composite_score", "asc": False}),
-    dcc.Store(id="screener-page-store", data=0),  # 1D: pagination — current page (0-indexed)
+    dcc.Store(id="screener-page-store", data=0, storage_type="session"),  # 1D: pagination — current page (0-indexed), session-persisted so mobile tab switches don't reset it
     dcc.Store(id="search-history-store"),
     dcc.Store(id="screener-click-ticker"),   # symbol clicked in screener table
     dcc.Store(id="portfolio-refresh-store", data=0),  # increment to trigger refresh
@@ -654,11 +680,15 @@ def update_progress_bar(n):
     Input("page-load-interval",    "n_intervals"),
     Input("sector-filter",         "value"),
     Input("screener-sort-store",   "data"),
-    Input("screener-viewed-store", "data"),
     Input("screener-page-store",   "data"),
+    # screener-viewed-store is a State (not Input) so that analyzing a stock
+    # does NOT trigger a re-render that could reset the page on mobile.
+    # The viewed highlights update when the next natural re-render occurs
+    # (e.g. pagination, sort, filter, or screener-ready signal).
+    State("screener-viewed-store", "data"),
     prevent_initial_call=False
 )
-def render_screener_table(ready, n_load, sector_filter, sort_state, viewed_data, current_page):
+def render_screener_table(ready, n_load, sector_filter, sort_state, current_page, viewed_data):
     global _last_screener_state
     # Always allow a fresh render on page-load trigger so a browser refresh
     # never gets stuck behind a stale dedup-cache value.
@@ -2324,6 +2354,27 @@ app.clientside_callback(
     """,
     Output("loading-trigger", "id"),
     Input("loading-trigger",  "id"),
+)
+
+
+# ── Mobile fix: scroll screener to top when tab becomes visible ───────────────
+# On mobile, returning to the screener tab should scroll back to the table top
+# so the user sees the current page (not a stale scroll position mid-page).
+
+app.clientside_callback(
+    """
+    function(screener_style) {
+        if (screener_style && screener_style.display !== 'none') {
+            var el = document.getElementById('screener-table-container');
+            if (el) {
+                el.scrollIntoView({behavior: 'smooth', block: 'start'});
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("screener-table-container", "id"),
+    Input("tab-screener", "style"),
 )
 
 

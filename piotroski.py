@@ -89,6 +89,8 @@ def score(sec: dict) -> dict:
     cl_1   = _nth(sec.get("cur_lib",      []), 1)
     ltd_0  = _nth(sec.get("lt_debt",      []), 0)
     ltd_1  = _nth(sec.get("lt_debt",      []), 1)
+    tl_0   = _nth(sec.get("tot_lib",      []), 0)   # total liabilities — F5 fallback
+    tl_1   = _nth(sec.get("tot_lib",      []), 1)
     sh_0   = _nth(sec.get("shares",       []), 0)
     sh_1   = _nth(sec.get("shares",       []), 1)
     gp_0   = _nth(sec.get("gross_profit", []), 0)
@@ -153,15 +155,27 @@ def score(sec: dict) -> dict:
     # ════════════════════════════════════════════════════════════════════════
 
     # F5: Long-term debt ratio decreasing
+    # Primary:  lt_debt / total_assets (Piotroski original)
+    # Fallback: tot_lib / total_assets for sectors where lt_debt is absent
+    #           (insurance, banks) — captures overall deleveraging trend.
     lev_0 = (ltd_0 / ast_0) if (ltd_0 is not None and ast_0 and ast_0 > 0) else None
     lev_1 = (ltd_1 / ast_1) if (ltd_1 is not None and ast_1 and ast_1 > 0) else None
+    lev_method = "LTD/Assets"
+
+    if lev_0 is None or lev_1 is None:
+        # Fallback: total liabilities / total assets
+        fb_0 = (tl_0 / ast_0) if (tl_0 is not None and ast_0 and ast_0 > 0) else None
+        fb_1 = (tl_1 / ast_1) if (tl_1 is not None and ast_1 and ast_1 > 0) else None
+        if fb_0 is not None and fb_1 is not None:
+            lev_0, lev_1, lev_method = fb_0, fb_1, "TotalLiab/Assets"
+
     f5 = 1 if (lev_0 is not None and lev_1 is not None and lev_0 < lev_1) else 0
     signals.append({
         "id":       "F5",
         "label":    "Decreasing Leverage",
         "category": "Leverage",
         "signal":   f5,
-        "note":     (f"LTD/Assets {lev_0*100:.1f}% vs {lev_1*100:.1f}% prior"
+        "note":     (f"{lev_method}: {lev_0*100:.1f}% vs {lev_1*100:.1f}% prior"
                      if lev_0 is not None and lev_1 is not None else "Insufficient data"),
     })
 

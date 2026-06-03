@@ -421,8 +421,8 @@ def score(price: float | None, sec: dict) -> dict:
 
     if iv is None or not price:
         iv_score = 0
-        iv_note  = ("No live price to compare against intrinsic value"
-                    if iv is None else "Insufficient data to estimate intrinsic value")
+        iv_note  = ("Insufficient data to estimate intrinsic value"
+                    if iv is None else "No live price to compare against intrinsic value")
     elif price <= iv * 0.60:
         iv_score = 15
         iv_note  = (f"Price ${price:.2f} ≤ 60% of IV ${iv:.2f} ({iv_base}) — "
