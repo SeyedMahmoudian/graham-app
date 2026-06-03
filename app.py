@@ -173,7 +173,17 @@ def analyze_stock(symbol: str) -> dict:
     try:
         sec_facts = sec_data.fetch_company_facts(symbol)
     except ValueError as e:
-        return {"error": str(e)}
+        err_msg = str(e)
+        # Provide a more actionable message for foreign-listed tickers that
+        # don't file with the SEC (e.g. BMO, TD, RY, SHOP.TO, etc.)
+        if "not found in SEC database" in err_msg:
+            err_msg = (
+                f"{err_msg}. This app uses SEC EDGAR filings, which only covers "
+                "US-listed companies that file 10-K/10-Q reports. Foreign-listed "
+                "or OTC-only tickers (e.g. Canadian banks like BMO, TD, RY) are "
+                "not supported. Try the US-listed ADR or a US-domiciled equivalent."
+            )
+        return {"error": err_msg}
     except Exception as e:
         return {"error": f"SEC EDGAR error: {e}"}
 

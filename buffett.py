@@ -402,12 +402,31 @@ def score(price: float | None, sec: dict) -> dict:
     # ── 7. Intrinsic Value vs Price (DCF) — 15 pts ───────────────────────────
     # Two-stage DCF on owner earnings per share.
     # Prefer FCF/share; fall back to EPS.
+    #
+    # Plausibility guard: some companies (REITs, partnerships) co-file LP/OP
+    # unit counts under the same XBRL concept as common shares, producing a
+    # wildly inflated FCF/share (e.g. SPG with 8,000 LP units vs ~325M common
+    # shares gives FCF/share > $500,000).  If FCF/share exceeds 50× the live
+    # price — or 50× the latest EPS when no price is available — treat the
+    # shares figure as unreliable and fall back to EPS directly.
     iv      = None
     iv_base = None
 
     if shares and shares > 0:
         fcf_ps  = (fcf_now / shares) if fcf_now and fcf_now > 0 else None
         eps_ps  = eps if eps and eps > 0 else None
+
+        # Sanity-check fcf_ps: it should be in the same ballpark as EPS/price.
+        # A factor-of-50 ceiling catches LP-unit contamination while still
+        # allowing genuinely high FCF/share companies.
+        if fcf_ps is not None:
+            reference = price if price else (eps_ps * 15 if eps_ps else None)
+            if reference and fcf_ps > reference * 50:
+                print(f"  [Buffett IV] FCF/share ${fcf_ps:,.2f} is >50× reference "
+                      f"${reference:.2f} — shares count ({shares:,.0f}) looks like "
+                      "LP/OP units; falling back to EPS for DCF")
+                fcf_ps = None   # discard; use eps_ps instead
+
         base    = fcf_ps or eps_ps
         b_label = "FCF/share" if fcf_ps else ("EPS" if eps_ps else None)
 

@@ -488,7 +488,18 @@ def _shares_df(facts: dict, years: int = 11) -> pd.DataFrame:
     Resolve shares outstanding across multiple namespaces.
     Insurance companies and others file EntityCommonStockSharesOutstanding
     under the DEI namespace rather than us-gaap.
+
+    Sanity check: REITs and operating partnerships sometimes co-file under
+    the same CIK, and the LP/OP unit count (often just a few thousand) can
+    appear first in us-gaap:CommonStockSharesOutstanding even though the
+    actual common share count is in the hundreds of millions.  We require
+    the most-recent value to be ≥ MIN_PLAUSIBLE_SHARES (100,000); if a
+    concept returns fewer shares we skip it and keep searching.
     """
+    # Any company with fewer than 100k shares is almost certainly an LP/OP
+    # unit class, not the common equity we want for per-share calculations.
+    MIN_PLAUSIBLE_SHARES = 100_000
+
     concept_ns_pairs = [
         ("CommonStockSharesOutstanding",          "us-gaap"),
         ("SharesOutstanding",                     "us-gaap"),
@@ -523,10 +534,21 @@ def _shares_df(facts: dict, years: int = 11) -> pd.DataFrame:
             .reset_index(drop=True)
         )
 
-        if not df_10k.empty:
-            print(f"  [SEC] shares via '{ns}:{concept}' "
-                  f"({len(df_10k)} years, latest {df_10k['year'].iloc[0]})")
-            return df_10k
+        if df_10k.empty:
+            continue
+
+        # Sanity check: skip LP/OP unit classes with implausibly few shares
+        latest_shares = float(df_10k["value"].iloc[0])
+        if latest_shares < MIN_PLAUSIBLE_SHARES:
+            print(f"  [SEC] shares via '{ns}:{concept}' rejected "
+                  f"(latest={latest_shares:,.0f} < {MIN_PLAUSIBLE_SHARES:,} — "
+                  "likely LP/OP units, not common equity)")
+            continue
+
+        print(f"  [SEC] shares via '{ns}:{concept}' "
+              f"({len(df_10k)} years, latest {df_10k['year'].iloc[0]}, "
+              f"{latest_shares/1e6:.1f}M shares)")
+        return df_10k
 
     print("  [SEC] ⚠️  No shares-outstanding concept found")
     return pd.DataFrame()
