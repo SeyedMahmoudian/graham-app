@@ -413,8 +413,9 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
 
     # Compute per-symbol monthly return stats from history
     symbols = list(holdings.keys())
-    sym_stats: dict[str, tuple[float, float]] = {}  # sym → (mean_monthly, std_monthly)
-    weights:   dict[str, float] = {}
+    sym_stats:  dict[str, tuple[float, float]] = {}  # sym → (mean_monthly, std_monthly)
+    weights:    dict[str, float] = {}
+    ret_series: dict[str, pd.Series] = {}  # sym → monthly return series for covariance
 
     total_val = 0.0
     for sym, h in holdings.items():
@@ -430,6 +431,7 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
         else:
             rets = df["Close"].pct_change().dropna()
             sym_stats[sym] = (float(rets.mean()), float(rets.std()))
+            ret_series[sym] = rets  # store for covariance computation
 
         price = holdings[sym].get("price_at_add", 1)
         val   = holdings[sym]["shares"] * price
@@ -437,14 +439,20 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
 
     # Portfolio blended monthly stats (weighted)
     port_mean = sum(weights[s] * sym_stats[s][0] for s in symbols)
-  
-    # Approximate: assume average pairwise correlation of 0.4
-    n = len(symbols)
-    rho_avg = 0.4
-    # Diversified component + undiversifiable market component
-    port_var = (1 - rho_avg) / n * sum((w * s)**2 for w, s in ...) \
-         + rho_avg * sum(w * s for w, s in ...)**2
-    port_std = math.sqrt(port_var)
+
+    # Covariance-matrix portfolio volatility: σp = sqrt(wᵀ Σ w)
+    valid_cov_syms = [s for s in symbols if s in ret_series]
+    if len(valid_cov_syms) >= 2:
+        ret_df = pd.concat(
+            [ret_series[s].rename(s) for s in valid_cov_syms], axis=1
+        ).dropna()
+        w_arr  = np.array([weights[s] for s in valid_cov_syms])
+        cov_mat = ret_df.cov().values
+        port_var = float(w_arr @ cov_mat @ w_arr)
+        port_std = math.sqrt(max(port_var, 0.0))
+    else:
+        # Fallback: single asset or all histories missing — weighted average std
+        port_std = sum(weights[s] * sym_stats[s][1] for s in symbols)
 
     # SPY stats
     spy_df = _load_history("SPY")
