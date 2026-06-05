@@ -100,7 +100,7 @@ Acceptance Criteria:
 
 # ISSUE-003
 
-Status: [ ]
+Status: [x]
 
 Title:
 Monte Carlo Portfolio Volatility Ignores Correlation
