@@ -135,7 +135,7 @@ Acceptance Criteria:
 
 # ISSUE-004
 
-Status: [ ]
+Status: [x]
 
 Title:
 Monte Carlo Drift Uses Arithmetic Mean
