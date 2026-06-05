@@ -40,6 +40,7 @@ Add total_assets to sec_data.py — see patch in that file.
 """
 
 import math
+from datetime import datetime, timedelta
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -64,6 +65,74 @@ def _nth(records: list, n: int = 0) -> float | None:
     return None
 
 
+def _parse_date(s) -> datetime | None:
+    """Parse an ISO-8601 date string (YYYY-MM-DD) or return None."""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _annual_pair(records: list) -> tuple[float | None, float | None]:
+    """
+    Return (current_value, prior_year_value) from a list of SEC fact records.
+
+    Each record is expected to have:
+        {"value": ..., "end": "YYYY-MM-DD", ...}   (SEC EDGAR convention)
+
+    Selection rules (ISSUE-005 fix):
+      1. Filter to records that have a parseable "end" date.
+      2. Sort descending by end date.
+      3. Take the most-recent record as "current" (index 0).
+      4. Scan remaining records for one whose end date is 10–14 months
+         before the current record's end date (i.e. one annual period back).
+         This ensures we compare full fiscal years, not adjacent quarters.
+      5. If no dated "prior" record is found within the 10–14 month window,
+         fall back to the second record by list position (_nth index 1) so
+         we still produce *some* value rather than silently dropping the
+         signal.  The fallback is flagged so callers can note data quality.
+
+    Returns:
+        (current_val, prior_val)   — either may be None if data is absent.
+    """
+    # Separate records with parseable dates from undated ones
+    dated = []
+    for r in records:
+        v = r.get("value")
+        if v is None:
+            continue
+        d = _parse_date(r.get("end"))
+        if d is not None:
+            dated.append((d, _safe(v)))
+
+    # Sort newest → oldest
+    dated.sort(key=lambda x: x[0], reverse=True)
+
+    if not dated:
+        # No date metadata at all — fall back to positional extraction
+        return _nth(records, 0), _nth(records, 1)
+
+    current_date, current_val = dated[0]
+
+    # Look for a record ~1 year before the current one (10–14 month window)
+    lo = current_date - timedelta(days=14 * 30)   # ~14 months back
+    hi = current_date - timedelta(days=10 * 30)   # ~10 months back
+
+    prior_val = None
+    for d, v in dated[1:]:
+        if lo <= d <= hi:
+            prior_val = v
+            break
+
+    if prior_val is None:
+        # Fallback: use the second positional value (may be adjacent quarter)
+        prior_val = _nth(records, 1)
+
+    return current_val, prior_val
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def score(sec: dict) -> dict:
@@ -77,26 +146,18 @@ def score(sec: dict) -> dict:
       <key ratios> floats for display
     """
 
-    # ── Pull current year (index 0) and prior year (index 1) values ──────────
-    net_0  = _nth(sec.get("net_inc",      []), 0)
-    net_1  = _nth(sec.get("net_inc",      []), 1)
-    ocf_0  = _nth(sec.get("op_cf",        []), 0)
-    ast_0  = _nth(sec.get("total_assets", []), 0)
-    ast_1  = _nth(sec.get("total_assets", []), 1)
-    ca_0   = _nth(sec.get("cur_ast",      []), 0)
-    ca_1   = _nth(sec.get("cur_ast",      []), 1)
-    cl_0   = _nth(sec.get("cur_lib",      []), 0)
-    cl_1   = _nth(sec.get("cur_lib",      []), 1)
-    ltd_0  = _nth(sec.get("lt_debt",      []), 0)
-    ltd_1  = _nth(sec.get("lt_debt",      []), 1)
-    tl_0   = _nth(sec.get("tot_lib",      []), 0)   # total liabilities — F5 fallback
-    tl_1   = _nth(sec.get("tot_lib",      []), 1)
-    sh_0   = _nth(sec.get("shares",       []), 0)
-    sh_1   = _nth(sec.get("shares",       []), 1)
-    gp_0   = _nth(sec.get("gross_profit", []), 0)
-    gp_1   = _nth(sec.get("gross_profit", []), 1)
-    rev_0  = _nth(sec.get("revenue",      []), 0)
-    rev_1  = _nth(sec.get("revenue",      []), 1)
+    # ── Pull current-year and prior-year values via date-validated pairs ──────
+    # Single-period metrics (no YoY needed) use _nth(…, 0)
+    net_0,  net_1  = _annual_pair(sec.get("net_inc",      []))
+    ocf_0           = _nth(sec.get("op_cf",               []), 0)
+    ast_0,  ast_1  = _annual_pair(sec.get("total_assets", []))
+    ca_0,   ca_1   = _annual_pair(sec.get("cur_ast",      []))
+    cl_0,   cl_1   = _annual_pair(sec.get("cur_lib",      []))
+    ltd_0,  ltd_1  = _annual_pair(sec.get("lt_debt",      []))
+    tl_0,   tl_1   = _annual_pair(sec.get("tot_lib",      []))
+    sh_0,   sh_1   = _annual_pair(sec.get("shares",       []))
+    gp_0,   gp_1   = _annual_pair(sec.get("gross_profit", []))
+    rev_0,  rev_1  = _annual_pair(sec.get("revenue",      []))
 
     signals = []
 
