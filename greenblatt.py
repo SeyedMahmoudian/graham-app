@@ -89,7 +89,7 @@ def compute_single(price: float | None, sec: dict) -> dict:
     # Invested Capital
     # Primary:  Net Working Capital + Net PP&E
     # Fallback: Total Assets − Current Liabilities
-    nwc = (cur_ast - cur_lib) if (cur_ast is not None and cur_lib is not None) else None
+    nwc = (cur_ast - cash_val - cur_lib) if (cur_ast is not None and cur_lib is not None) else None
 
     if ppe is not None and nwc is not None:
         invested_capital = nwc + ppe

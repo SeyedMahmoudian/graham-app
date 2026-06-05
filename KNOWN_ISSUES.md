@@ -233,7 +233,7 @@ Acceptance Criteria:
 
 # ISSUE-007
 
-Status: [ ]
+Status: [x]
 
 Title:
 Greenblatt Net Working Capital Includes Cash
@@ -264,7 +264,7 @@ Acceptance Criteria:
 
 # ISSUE-008
 
-Status: [?]
+Status: []
 
 Title:
 Greenblatt Earnings Yield Composite Score Treatment
