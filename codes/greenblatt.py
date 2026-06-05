@@ -55,6 +55,36 @@ def _first(records: list) -> float | None:
     return None
 
 
+# ── Enterprise Value helper (single authoritative implementation) ─────────────
+
+def enterprise_value(price: float | None, sec: dict) -> float | None:
+    """
+    Compute Enterprise Value for a single stock.
+
+    EV = Market Cap + Long-term Debt − Cash & Equivalents
+
+    This is the *only* place EV should be computed in this codebase.
+    Import and call this function rather than re-implementing the formula.
+
+    Total Debt = Long-term Debt only (lt_debt).
+    Short-term debt / current portion of LTD is excluded because SEC XBRL
+    reports often conflate it with accounts payable; using lt_debt alone is
+    the standard Greenblatt Magic Formula convention and ensures comparability
+    across sectors.
+
+    Returns None when price or shares data is unavailable.
+    """
+    shares  = _first(sec.get("shares",  []))
+    lt_debt = _first(sec.get("lt_debt", []))
+    cash    = _first(sec.get("cash",    []))
+
+    mkt_cap    = (price * shares) if (price and shares) else None
+    total_debt = (lt_debt or 0.0)
+    cash_val   = (cash   or 0.0)
+
+    return (mkt_cap + total_debt - cash_val) if mkt_cap is not None else None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 1 — compute raw metrics for a single stock
 # ══════════════════════════════════════════════════════════════════════════════
@@ -66,6 +96,12 @@ def compute_single(price: float | None, sec: dict) -> dict:
     Returns:
         dict with earnings_yield (%), roic (%), ev, invested_capital.
         earnings_yield / roic are None if data is insufficient.
+
+    Enterprise Value (canonical definition — authoritative for this codebase):
+        EV = Market Cap + Long-term Debt − Cash & Equivalents
+        All other modules that need EV must call greenblatt.enterprise_value()
+        or consume the 'enterprise_value' key from this function's return dict,
+        rather than re-implementing the formula independently.
     """
     ebit    = _first(sec.get("op_income", []))     # operating income ≈ EBIT
     shares  = _first(sec.get("shares",    []))
@@ -80,8 +116,8 @@ def compute_single(price: float | None, sec: dict) -> dict:
     total_debt = (lt_debt or 0.0)
     cash_val   = (cash   or 0.0)
 
-    # Enterprise Value
-    ev = (mkt_cap + total_debt - cash_val) if mkt_cap else None
+    # Enterprise Value — use the canonical helper to avoid duplication
+    ev = enterprise_value(price, sec)
 
     # Earnings Yield = EBIT / EV
     earnings_yield = (ebit / ev) if (ebit is not None and ev and ev > 0) else None

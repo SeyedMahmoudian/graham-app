@@ -157,6 +157,11 @@ ENHANCED_VERDICTS = [
 # Greenblatt data IS surfaced in the analysis result dict (greenblatt_result)
 # and displayed in app.py for informational purposes. When the screener runs
 # rank_universe() the magic_score becomes available for universe-level sorting.
+#
+# ISSUE-002: Enterprise Value is computed ONLY in greenblatt.enterprise_value()
+# and consumed via greenblatt.compute_single(). scorer.py must never
+# re-implement the EV formula independently. Use greenblatt.compute_single()
+# or greenblatt.enterprise_value(price, sec) to obtain EV for any need.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def enhanced_composite(

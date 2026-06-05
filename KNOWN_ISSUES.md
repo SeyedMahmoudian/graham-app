@@ -62,9 +62,9 @@ Before editing:
 
 Output:
 
-* short explanation
 * affected functions
 * planned patch
+
 
 STOP.
 
@@ -287,7 +287,7 @@ Acceptance Criteria:
 
 ## ISSUE-002
 
-Status: [ ]
+Status: [y]
 
 Title: Enterprise value calculation correctness
 
@@ -580,6 +580,7 @@ altman.py
 portfolio.py
 risk_metrics.py
 scorer.py
+buffett.py
 
 Problem:
 Code organization is inconsistent.
