@@ -15,37 +15,30 @@ Status values:
 ---
 # ISSUE-001
 
-Status: [x]
+Status: []
 
 Title:
-Sortino Ratio Uses Downside Count Denominator
+Division by zero in greenblatt.py
 
 Priority:
 Critical
 
 File:
-risk_metrics.py
+greenblatt.py
 
 Problem:
-
-Downside deviation may be divided by downside observations only.
-
-Standard Sortino methodology uses total observations.
+we are dividing by zero
 
 Required Fix:
-
-downside_variance =
-Σ(min(0, r-target)^2) / N
-
+fix the bug 
 where:
 
-N = total observations
+
 
 Acceptance Criteria:
 
-* Total observations used.
-* Sortino calculation updated.
-* Unit tests added.
+* Division by zero is no longer there
+* fixed code is pushed to git
 
 
 
@@ -371,7 +364,7 @@ Existing partial coverage:
 
 ## TEST-001
 
-Status: [ ]
+Status: [x]
 
 Title:
 Full Unit Tests for altman.py

@@ -9,7 +9,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import graham
+from codes import graham
 
 
 def _make_sec(div_years_list):

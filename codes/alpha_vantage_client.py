@@ -17,6 +17,7 @@ import math
 import requests
 import finnhub
 import pandas as pd
+from codes import cache
 from cache import read, write
 
 # ── Finnhub config ────────────────────────────────────────────────────────────

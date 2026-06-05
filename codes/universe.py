@@ -19,7 +19,7 @@ disclaimer — we skip the header with skiprows and drop the footer rows.
 """
 
 import pandas as pd
-import cache
+from codes import cache
 import requests
 from io import StringIO
 

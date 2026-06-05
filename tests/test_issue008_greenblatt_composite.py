@@ -13,7 +13,7 @@ import os
 import math
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import scorer
+from codes import scorer
 
 
 def _make_result(score=50, max_=100, **extra):

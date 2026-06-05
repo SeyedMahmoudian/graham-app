@@ -6,7 +6,7 @@ Verifies that missing components do not artificially depress the Z-score.
 
 import math
 import pytest
-import altman
+from codes import altman
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
