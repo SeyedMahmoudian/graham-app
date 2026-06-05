@@ -111,29 +111,19 @@ def compute_single(price: float | None, sec: dict) -> dict:
     ppe     = _first(sec.get("ppe_net",   []))      # net PP&E (new field)
     cash    = _first(sec.get("cash",      []))      # cash & equivalents (new field)
     tot_ast = _first(sec.get("total_assets", []))   # fallback if PP&E missing
-    op_cf   = _first(sec.get("op_cf",     []))      # operating cash flow
-    capex   = _first(sec.get("capex",     []))      # capital expenditure
 
-    mkt_cap    = (price * shares) if (price and shares) else None
-    total_debt = (lt_debt or 0.0)
-    cash_val   = (cash   or 0.0)
-
-    # Enterprise Value — use the canonical helper to avoid duplication
+    # Enterprise Value — single authoritative implementation via enterprise_value()
+    # ISSUE-002: do NOT recompute mkt_cap/total_debt/cash_val here; delegate entirely.
     ev = enterprise_value(price, sec)
 
     # Earnings Yield = EBIT / EV
     earnings_yield = (ebit / ev) if (ebit is not None and ev and ev > 0) else None
 
-    # FCF Yield = FCF / EV  (non-zero EV guard prevents division by zero)
-    # FCF = Operating CF − CapEx; capex is typically reported as a positive outflow
-    fcf = None
-    if op_cf is not None:
-        fcf = op_cf - abs(capex) if capex is not None else op_cf
-    fcf_yield = (fcf / ev) if (fcf is not None and ev and ev > 0) else None
-
     # Invested Capital
     # Primary:  Net Working Capital + Net PP&E
     # Fallback: Total Assets − Current Liabilities
+    # cash_val needed locally for NWC only (not for EV — that's in enterprise_value())
+    cash_val = (cash or 0.0)
     nwc = (cur_ast - cash_val - cur_lib) if (cur_ast is not None and cur_lib is not None) else None
 
     if ppe is not None and nwc is not None:
@@ -159,12 +149,13 @@ def compute_single(price: float | None, sec: dict) -> dict:
         else None
     )
 
+    mkt_cap = (price * shares) if (price and shares) else None
+
     return {
         "ebit":             ebit,
         "enterprise_value": ev,
         "mkt_cap":          mkt_cap,
         "earnings_yield":   round(earnings_yield * 100, 3) if earnings_yield is not None else None,
-        "fcf_yield":        round(fcf_yield * 100, 3)      if fcf_yield      is not None else None,
         "roic":             round(roic * 100, 3)           if roic           is not None else None,
         "invested_capital": invested_capital,
         "ic_method":        ic_method,
@@ -224,9 +215,7 @@ def rank_universe(universe_metrics: list[dict]) -> list[dict]:
     for item in valid:
         combined = item["_ey_rank"] + item["_roic_rank"]
         # Convert to 0-100 score: lower combined rank = better = higher score
-        # Guard: denominator is 0 when n==1 (single stock); award 100.
-        denom = 2 * n - 2
-        item["magic_score"]     = 100.0 if denom == 0 else round((1 - (combined - 2) / denom) * 100, 1)
+        item["magic_score"] = 100.0 if n == 1 else round((1 - (combined - 2) / (2 * n - 2)) * 100, 1)
         item["magic_rank"]      = combined
         item["ey_percentile"]   = round((1 - item["_ey_rank"]   / n) * 100, 1)
         item["roic_percentile"] = round((1 - item["_roic_rank"] / n) * 100, 1)

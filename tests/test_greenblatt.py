@@ -82,7 +82,7 @@ class TestComputeSingleFull:
     def test_ic_method_nwc_plus_ppe(self):
         sec = _sec()
         result = greenblatt.compute_single(price=50.0, sec=sec)
-        assert result["ic_method"] == "NWC + PP&amp;E"
+        assert result["ic_method"] == "NWC + PP&E"
 
     def test_magic_score_none_before_ranking(self):
         sec = _sec()
@@ -139,6 +139,52 @@ class TestComputeSingleNegativeEbit:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ISSUE-002: EV consistency — compute_single() must match enterprise_value()
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestEnterpriseValueConsistency:
+    """
+    ISSUE-002: EV must be computed only in enterprise_value().
+    compute_single() must not re-implement the formula independently.
+    """
+
+    def test_ev_consistent_with_helper(self):
+        sec = _sec(shares=1_000, lt_debt=200_000, cash=20_000)
+        ev_helper = greenblatt.enterprise_value(price=50.0, sec=sec)
+        ev_single = greenblatt.compute_single(price=50.0, sec=sec)["enterprise_value"]
+        assert ev_helper == pytest.approx(ev_single)
+
+    def test_ev_consistent_no_price(self):
+        sec = _sec(shares=1_000, lt_debt=200_000, cash=20_000)
+        ev_helper = greenblatt.enterprise_value(price=None, sec=sec)
+        ev_single = greenblatt.compute_single(price=None, sec=sec)["enterprise_value"]
+        assert ev_helper is None
+        assert ev_single is None
+
+    def test_ev_consistent_no_cash(self):
+        sec = _sec_no_cash(shares=1_000, lt_debt=150_000)
+        ev_helper = greenblatt.enterprise_value(price=50.0, sec=sec)
+        ev_single = greenblatt.compute_single(price=50.0, sec=sec)["enterprise_value"]
+        assert ev_helper == pytest.approx(ev_single)
+
+    def test_mkt_cap_in_ev_formula(self):
+        """EV = mktcap + lt_debt - cash; no independent local recomputation."""
+        sec = _sec(shares=2_000, lt_debt=100_000, cash=10_000)
+        expected_ev = 50.0 * 2_000 + 100_000 - 10_000   # 190_000
+        ev_single   = greenblatt.compute_single(price=50.0, sec=sec)["enterprise_value"]
+        assert ev_single == pytest.approx(expected_ev)
+
+    def test_ev_zero_debt_zero_cash(self):
+        """EV = mkt_cap when no debt and no cash."""
+        sec = _sec(shares=1_000, lt_debt=0, cash=0)
+        expected_ev = 50.0 * 1_000
+        ev_helper   = greenblatt.enterprise_value(price=50.0, sec=sec)
+        ev_single   = greenblatt.compute_single(price=50.0, sec=sec)["enterprise_value"]
+        assert ev_helper  == pytest.approx(expected_ev)
+        assert ev_single  == pytest.approx(expected_ev)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # ISSUE-007: NWC must exclude cash
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -186,7 +232,7 @@ class TestNwcExcludesCash:
         )
 
     def test_invested_capital_with_ppe_also_excludes_cash(self):
-        """When PP&amp;E is present: IC = (cur_ast - cash - cur_lib) + ppe."""
+        """When PP&E is present: IC = (cur_ast - cash - cur_lib) + ppe."""
         cur_ast = 200_000
         cash    =  30_000
         cur_lib =  60_000
@@ -205,7 +251,7 @@ class TestNwcExcludesCash:
         ic_wrong  = nwc_wrong + ppe               # 240_000
         roic_wrong = round(ebit / ic_wrong * 100, 3)
 
-        assert result["ic_method"] == "NWC + PP&amp;E"
+        assert result["ic_method"] == "NWC + PP&E"
         assert math.isclose(result["roic"], roic_correct, rel_tol=1e-3), (
             f"ROIC {result['roic']:.3f} should be {roic_correct:.3f} "
             f"(wrong would be {roic_wrong:.3f}). Cash must be excluded from NWC."
