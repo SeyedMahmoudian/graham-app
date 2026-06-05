@@ -82,10 +82,14 @@ def score(
               if std_excess > 0 else None)
 
     # ── Sortino Ratio ─────────────────────────────────────────────────────────
-    downside_rets = returns[returns < rf_monthly]
-    if len(downside_rets) > 1:
-        down_std = float(np.std(downside_rets, ddof=1)) * math.sqrt(MONTHS_PER_YEAR)
-        sortino  = (annual_return - RISK_FREE_RATE) / down_std if down_std > 0 else None
+    # Downside deviation uses total N as denominator (not downside-count only).
+    # Formula: sqrt( Σ min(0, r − rf)² / N ) — Sortino & Price (1994).
+    n_total = len(returns)
+    downside_sq = np.minimum(returns - rf_monthly, 0.0) ** 2
+    down_var = float(np.sum(downside_sq) / n_total)
+    if down_var > 0:
+        down_std = math.sqrt(down_var) * math.sqrt(MONTHS_PER_YEAR)
+        sortino  = (annual_return - RISK_FREE_RATE) / down_std
     else:
         sortino = None
 
