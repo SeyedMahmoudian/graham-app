@@ -246,7 +246,8 @@ def analyze_stock(symbol: str) -> dict:
 
     # Enhanced 7-factor composite
     enhanced = scorer.enhanced_composite(
-        g, q, m_result, piotroski_result, risk_result, altman_result, buffett_result
+        g, q, m_result, piotroski_result, risk_result, altman_result, buffett_result,
+        greenblatt_result=greenblatt_result   # ISSUE-008: display only, not in weighted sum
     )
 
     result = {

@@ -137,6 +137,28 @@ ENHANCED_VERDICTS = [
 ]
 
 
+# ── ISSUE-008 resolution: Greenblatt Earnings Yield in composite scoring ──────
+#
+# Greenblatt's Magic Formula requires CROSS-SECTIONAL ranking: a stock's
+# magic_score (0-100) is only meaningful relative to the full universe.
+# Therefore it cannot be included in a single-stock composite score —
+# including it would always give a neutral 50 (no peer comparison possible).
+#
+# Current behaviour:
+#   greenblatt.compute_single() -> earnings_yield (%) and roic (%) stored in
+#   the analysis dict for display purposes only.
+#   magic_score is None until rank_universe() is called on the screener universe.
+#
+# Decision: EXCLUDE from enhanced_composite() weighted sum.
+#   Rationale: composite score must be deterministic for a single stock.
+#   Including an unnormalised EY % alongside normalised 0-100 pillar scores
+#   would distort the weighted sum unpredictably.
+#
+# Greenblatt data IS surfaced in the analysis result dict (greenblatt_result)
+# and displayed in app.py for informational purposes. When the screener runs
+# rank_universe() the magic_score becomes available for universe-level sorting.
+# ─────────────────────────────────────────────────────────────────────────────
+
 def enhanced_composite(
     graham_result:    dict,
     quality_result:   dict,
@@ -145,6 +167,7 @@ def enhanced_composite(
     risk_result:      dict,
     altman_result:    dict,
     buffett_result:   dict | None = None,
+    greenblatt_result: dict | None = None,   # accepted for API compat; not scored (see ISSUE-008 note above)
 ) -> dict:
     """
     Seven-factor composite score (six factors when buffett_result is None for
@@ -229,6 +252,17 @@ def enhanced_composite(
         "piotroski_pct":   round(f_pct, 1),
         "risk_pct":        round(r_pct, 1),
         "altman_pct":      round(a_pct, 1),
+
+        # Greenblatt — display only, not in weighted sum (see ISSUE-008)
+        "greenblatt_earnings_yield": (
+            greenblatt_result.get("earnings_yield") if greenblatt_result else None
+        ),
+        "greenblatt_roic": (
+            greenblatt_result.get("roic") if greenblatt_result else None
+        ),
+        "greenblatt_magic_score": (
+            greenblatt_result.get("magic_score") if greenblatt_result else None
+        ),
 
         # Score and verdict
         "composite_score":   composite_score,
