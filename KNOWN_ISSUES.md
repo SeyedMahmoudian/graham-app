@@ -223,7 +223,7 @@ Acceptance Criteria:
 
 ## ISSUE-002
 
-Status: [y]
+Status: [x]
 
 Title: Enterprise value calculation correctness
 
