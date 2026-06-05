@@ -264,7 +264,7 @@ Acceptance Criteria:
 
 # ISSUE-008
 
-Status: []
+Status: [x]
 
 Title:
 Greenblatt Earnings Yield Composite Score Treatment
