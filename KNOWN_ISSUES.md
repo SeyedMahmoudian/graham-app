@@ -270,7 +270,7 @@ Acceptance Criteria:
 
 ## ISSUE-005
 
-**Status:** [ ]  
+**Status:** [x]  
 **Title:** CAGR calculation inconsistencies  
 **Files:** `portfolio.py`
 **Fix:** Standard CAGR with proper time delta  

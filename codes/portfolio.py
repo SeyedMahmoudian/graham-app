@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 
 from codes import cache
-import alpha_vantage_client
+from codes import alpha_vantage_client
 
 MAX_HOLDINGS  = 10
 MIN_SHARES    = 5
@@ -314,8 +314,11 @@ def run_backtest(portfolio: dict) -> dict:
         port_values.append(round(pv, 2))
         spy_values.append(round(spy_shares_equiv * float(row["SPY"]), 2))
 
-    # CAGR
-    n_years = len(wide) / 12
+   # CAGR
+    first_date = wide["Date"].iloc[0]
+    last_date  = wide["Date"].iloc[-1]
+    n_years    = max((last_date - first_date).days / 365.25, 1 / 12)
+
     def _cagr(start, end, years):
         if start <= 0 or end <= 0 or years <= 0:
             return 0.0
