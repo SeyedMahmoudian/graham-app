@@ -6,117 +6,53 @@ This system allows deterministic execution of known issues with minimal token us
 
 # USAGE FORMAT
 
-To execute a task, always use:
-
 ```
 run ISSUE-XXX
-```
-
-Example:
-
-```
-run ISSUE-007
 ```
 
 ---
 
 # EXECUTION RULES (MANDATORY)
 
-When `run ISSUE-XXX` is received:
+
 
 ## Step 1 — Load Context
 
-Only read:
-
-* KNOWN_ISSUES.md
-* AI_CONTEXT.md
-* PROJECT_MAP.md
-
-Then extract:
-
-* issue definition
-* file scope
-* acceptance criteria
-
-Do NOT scan repository.
+- Read **only**: `KNOWN_ISSUES.md`, `AI_CONTEXT.md`, `PROJECT_MAP.md`
+- Extract: issue definition, file scope, acceptance criteria
+- Never scan repository
 
 ---
 
 ## Step 2 — Scope Lock
-
-Restrict all work to files listed in the issue.
-
-If files are missing or unclear:
-→ STOP and ask a question
-
+- Work **only** on files explicitly listed in the issue
+- If file missing/unclear → STOP and ask
 ---
 
-## Step 3 — Diagnosis Mode (NO CODE CHANGES)
-
-Before editing:
-
-* Identify root cause
-* Identify exact function(s)
-* Identify failure path
-* Confirm fix strategy
-
-Output:
-
-* affected functions
-* planned patch
-
-
-STOP.
-
+## 3. Diagnosis (Very Brief)**
+   - Think: root cause + exact location
+   - Output **only**:
+    - DIAGNOSIS: [one sentence root cause + function]
+    - PLAN: [minimal fix description]
 ---
 
 ## Step 4 — Implementation Mode
 
-Apply minimal patch only:
-
-Rules:
-
-* no refactors
-* no renames
-* no unrelated formatting changes
-* preserve public APIs
+- Apply **smallest possible patch**
+- No refactor, rename, or unrelated changes
+- Preserve APIs
 
 ---
 
 ## Step 5 — Tests
 
-If tests exist:
-
-* ensure compatibility
-* add missing test cases if required
-
-If no tests exist:
-
-* create minimal unit tests only for issue
+- Add/update minimal test only for this issue
 
 ---
 
 ## Step 6 — Output Format
 
-Return ONLY:
-
-### Files Modified
-
-* file paths
-
-### Patch
-
-```diff
-...
-```
-
-### Tests Added/Updated
-
-* list
-
-### Status
-
-* PASS / NEEDS INFO
+- no need just push to git,if git not working show diff
 
 ---
 
@@ -314,291 +250,101 @@ Acceptance Criteria:
 
 ## ISSUE-003
 
-Status: [ ]
-
-Title: Free Cash Flow yield miscalculation
-
-Priority: High
-
-Files:
-
-* greenblatt.py
-* scorer.py
-
-Problem:
-FCF yield may not be normalized correctly against enterprise value.
-
-Required Fix:
-Ensure:
-FCF Yield = FCF / EV
-
-Acceptance Criteria:
-
-* Correct formula applied everywhere
-* EV denominator validated non-zero
-* Tests added for edge cases
+**Status:** [ ]  
+**Title:** Free Cash Flow yield miscalculation  
+**Files:** `greenblatt.py`, `scorer.py`  
+**Fix:** Enforce FCF Yield = FCF / EV with non-zero check  
+**Criteria:** Correct formula, edge case tests
 
 ---
 
 ## ISSUE-004
 
-Status: [ ]
-
-Title: Share dilution handling incorrect
-
-Priority: High
-
-Files:
-
-* graham.py
-* piotroski.py
-
-Problem:
-Share count growth is not consistently treated as dilution.
-
-Required Fix:
-Define consistent dilution rule:
-
-* threshold-based share increase penalty
-
-Acceptance Criteria:
-
-* Same dilution logic across modules
-* Unit tests for dilution thresholds
+**Status:** [ ]  
+**Title:** Share dilution handling incorrect  
+**Files:** `graham.py`, `piotroski.py`  
+**Fix:** Consistent threshold-based dilution rule  
+**Criteria:** Same logic across files + tests
 
 ---
 
 ## ISSUE-005
 
-Status: [ ]
-
-Title: CAGR calculation inconsistencies
-
-Priority: High
-
-Files:
-
-* portfolio.py
-* utils/returns.py (if exists)
-
-Problem:
-CAGR may not correctly account for compounding or missing periods.
-
-Required Fix:
-Use standard CAGR formula with proper time delta normalization.
-
-Acceptance Criteria:
-
-* Accurate multi-year compounding
-* Handles missing years safely
+**Status:** [ ]  
+**Title:** CAGR calculation inconsistencies  
+**Files:** `portfolio.py`, `utils/returns.py` (if exists)  
+**Fix:** Standard CAGR with proper time delta  
+**Criteria:** Correct compounding, safe missing periods
 
 ---
 
 ## ISSUE-006
 
-Status: [ ]
-
-Title: Earnings normalization inconsistency
-
-Priority: High
-
-Files:
-
-* graham.py
-* altman.py
-* scorer.py
-
-Problem:
-Earnings values are not consistently normalized across models.
-
-Required Fix:
-Standardize earnings definition before scoring.
-
-Acceptance Criteria:
-
-* Same earnings input across models
-* No inconsistent scaling
+**Status:** [ ]  
+**Title:** Earnings normalization inconsistency  
+**Files:** `graham.py`, `altman.py`, `scorer.py`  
+**Fix:** Standardize earnings definition  
+**Criteria:** Consistent input across models
 
 ---
 
 ## ISSUE-007
 
-Status: [ ]
-
-Title: Monte Carlo return assumptions incorrect
-
-Priority: High
-
-Files:
-
-* portfolio.py
-
-Problem:
-Monte Carlo uses arithmetic returns instead of geometric drift.
-
-Required Fix:
-Apply:
-μ_geo = μ_arith − σ²/2
-
-Acceptance Criteria:
-
-* Correct drift applied
-* Simulation validated via tests
+**Status:** [ ]  
+**Title:** Monte Carlo return assumptions incorrect  
+**Files:** `portfolio.py`  
+**Fix:** Use geometric drift μ_geo = μ_arith − σ²/2  
+**Criteria:** Correct drift + validation tests
 
 ---
 
 ## ISSUE-008
 
-Status: [ ]
-
-Title: Drawdown calculation incorrect
-
-Priority: High
-
-Files:
-
-* risk_metrics.py
-
-Problem:
-Max drawdown logic may not track rolling peak correctly.
-
-Required Fix:
-Implement proper peak-to-trough equity curve tracking.
-
-Acceptance Criteria:
-
-* Correct max drawdown
-* Handles all-negative series
+**Status:** [ ]  
+**Title:** Drawdown calculation incorrect  
+**Files:** `risk_metrics.py`  
+**Fix:** Proper peak-to-trough tracking  
+**Criteria:** Correct max drawdown, handles negative series
 
 ---
 
 ## ISSUE-009
 
-Status: [ ]
-
-Title: Correlation estimation methodology incorrect
-
-Priority: High
-
-Files:
-
-* portfolio.py
-
-Problem:
-Correlation assumptions may be oversimplified or inconsistent.
-
-Required Fix:
-Use proper covariance-derived correlation matrix.
-
-Acceptance Criteria:
-
-* Symmetric correlation matrix
-* No independence assumptions
+**Status:** [ ]  
+**Title:** Correlation estimation methodology incorrect  
+**Files:** `portfolio.py`  
+**Fix:** Use covariance-derived correlation matrix  
+**Criteria:** Symmetric matrix, no false independence
 
 ---
 
 ## ISSUE-010
 
-Status: [ ]
-
-Title: Survivorship bias in data handling
-
-Priority: High
-
-Files:
-
-* sec_data.py
-
-Problem:
-Data pipeline may exclude delisted/failed companies.
-
-Required Fix:
-Document and mitigate survivorship bias where possible.
-
-Acceptance Criteria:
-
-* Bias acknowledged in code/docs
-* Optional handling strategy implemented
+**Status:** [ ]  
+**Title:** Survivorship bias in data handling  
+**Files:** `sec_data.py`  
+**Fix:** Document + mitigate bias  
+**Criteria:** Bias acknowledged, optional handling
 
 ---
 
 ## ISSUE-011
 
-Status: [ ]
-
-Title: Missing financial statement handling
-
-Priority: High
-
-Files:
-sec_data.py
-graham.py
-piotroski.py
-altman.py
-portfolio.py
-risk_metrics.py
-scorer.py
-
-Problem:
-Missing data fields may cause silent failures or incorrect scoring.
-
-Required Fix:
-Standardize missing-data handling:
-
-* explicit None checks
-* fallback rules per model
-
-Acceptance Criteria:
-
-* No silent NaN propagation
-* All models handle missing inputs safely
+**Status:** [ ]  
+**Title:** Missing financial statement handling  
+**Files:** `sec_data.py`, `graham.py`, `piotroski.py`, `altman.py`, `portfolio.py`, `risk_metrics.py`, `scorer.py`  
+**Fix:** Standardize None checks + fallbacks  
+**Criteria:** No silent NaN, safe handling
 
 ---
 
 ## ISSUE-012
 
-Status: [ ]
-
-Title: Project folder structure cleanup
-
-Priority: Low
-
-Files:
-
-app.py
-alpha_vantage_client.py
-cache.py
-greenblatt.py
-momentum.py
-quality.py
-screener.py
-universe.py
-sec_data.py
-graham.py
-piotroski.py
-altman.py
-portfolio.py
-risk_metrics.py
-scorer.py
-buffett.py
-
-Problem:
-Code organization is inconsistent.
-
-Required Fix:
-Group modules into logical folders:
-
-* models/
-* data/
-* portfolio/
-* risk/
-* core/
-
-Acceptance Criteria:
-
-* Clean modular structure
-* No broken imports
-* Tests still pass
+**Status:** [ ]  
+**Title:** Project folder structure cleanup  
+**Files:** (many - see original)  
+**Fix:** Group into logical folders  
+**Criteria:** Clean structure, working imports, tests pass
 
 ---
 
@@ -606,18 +352,7 @@ Acceptance Criteria:
 
 (None yet)
 
----
-
-# TEST MAPPING (REFERENCE ONLY)
-
-Each issue must have at least one test verifying fix.
-
-Tests live in `/tests`.
-
-Naming convention:
-test_issue_XXX_<feature>.py
-
----
+**TEST RULE**: Add minimal test `test_issue_XXX_*.py` when needed.
 
 # AI EXECUTION PROTOCOL
 
