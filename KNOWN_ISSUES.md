@@ -201,7 +201,7 @@ Title: Maring of safety
 
 Priority: Normal
 
-Files: scorer
+Files: scorer.py
 
 * 
 
