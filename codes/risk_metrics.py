@@ -94,11 +94,20 @@ def score(
         sortino = None
 
     # ── Max Drawdown ──────────────────────────────────────────────────────────
-    prices      = hist["Close"].values
-    peak        = np.maximum.accumulate(prices)
-    drawdown    = (prices - peak) / peak
-    max_drawdown = float(np.min(drawdown))
-
+    # Robust version: works on price series (positive or negative)
+    prices = hist["Close"].values.astype(float)
+    if len(prices) == 0:
+        max_drawdown = 0.0
+    else:
+        # Use running peak on equity curve; normalize handling for negatives
+        peak = np.maximum.accumulate(prices)
+        # Avoid div-by-zero / sign issues
+        with np.errstate(divide='ignore', invalid='ignore'):
+            drawdown = np.where(peak != 0, (prices - peak) / peak, 0.0)
+            # For fully negative series, fall back to relative change from max
+            if np.all(prices <= 0):
+                drawdown = (prices - np.maximum.accumulate(prices)) / np.abs(np.maximum.accumulate(prices) + 1e-8)
+        max_drawdown = float(np.min(drawdown))
     # ── Calmar Ratio ─────────────────────────────────────────────────────────
     calmar = (annual_return / abs(max_drawdown)
               if max_drawdown < -0.001 else None)

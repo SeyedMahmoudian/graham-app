@@ -300,7 +300,7 @@ Acceptance Criteria:
 
 ## ISSUE-008
 
-**Status:** [ ]  
+**Status:** [x]  
 **Title:** Drawdown calculation incorrect  
 **Files:** `risk_metrics.py`  
 **Fix:** Proper peak-to-trough tracking  
