@@ -87,7 +87,9 @@ def score(price: float | None, sec: dict) -> dict:
     cur_lib  = _first(sec.get("cur_lib",          []))
     tot_ast  = _first(sec.get("total_assets",     []))
     ret_earn = _first(sec.get("retained_earnings",[]))
-    ebit = _first(sec.get("ebit", []))
+    ebit = _first(sec.get("op_income", []))
+    if ebit is None:
+        ebit = _first(sec.get("ebit", []))
     shares   = _first(sec.get("shares",           []))
     tot_lib  = _first(sec.get("tot_lib",          []))
     revenue  = _first(sec.get("revenue",          []))

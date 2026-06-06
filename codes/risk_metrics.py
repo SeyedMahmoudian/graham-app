@@ -57,6 +57,11 @@ def score(
     hist["Date"] = pd.to_datetime(hist["Date"])
     hist = hist.sort_values("Date").reset_index(drop=True)
 
+    # Remove non-positive prices: log(0) = -inf, log(negative) = NaN
+    hist = hist[hist["Close"] > 0].reset_index(drop=True)
+    if len(hist) < 6:
+        return _empty("Insufficient valid price data after removing non-positive prices")
+
     # Use log returns for better statistical properties
     hist["log_ret"] = np.log(hist["Close"] / hist["Close"].shift(1))
     returns = hist["log_ret"].dropna().values

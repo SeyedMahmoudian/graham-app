@@ -40,7 +40,7 @@ def score(price: float | None, sec: dict) -> dict:
     Given a live price and SEC-parsed data dict, return a full Graham report.
     """
 
-    eps_hist  = sec.get("earnings", [])
+    eps_hist  = sec.get("earnings", sec.get("net_inc", []))
     bvps_hist = sec.get("bvps",     [])
     cur_ast   = sec.get("cur_ast",  [])
     cur_lib   = sec.get("cur_lib",  [])
@@ -76,10 +76,13 @@ def score(price: float | None, sec: dict) -> dict:
     )
 
     # EPS trend
-    eps_values = [
-    _safe(r["value"]) / _safe(_first(shares))
-    for r in eps_hist if r.get("value") is not None
-    ]
+    _sh_val = _safe(_first(shares))
+    eps_values = (
+        [_safe(r["value"]) / _sh_val
+         for r in eps_hist
+         if r.get("value") is not None]
+        if (_sh_val is not None and _sh_val > 0) else []
+    )
     eps_years  = len(eps_values)
     loss_years = sum(1 for v in eps_values if v < 0)
 

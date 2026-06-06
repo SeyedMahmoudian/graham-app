@@ -200,9 +200,9 @@ def enhanced_composite(
     g_pct  = _pct(graham_result)
     q_pct  = _pct(quality_result)
     m_pct  = _pct(momentum_result)
-    f_pct  = (piotroski_result.get("f_score", 0) / 9 * 100)  # 0-9 scale
+    f_pct  = ((piotroski_result or {}).get("f_score", 0) or 0) / 9 * 100  # 0-9 scale
     r_pct  = _pct(risk_result, "risk_score", "risk_score_max")
-    a_pct  = altman_result.get("risk_score", 50) or 50           # 0-100 already
+    a_pct  = (altman_result or {}).get("risk_score", 50) or 50           # 0-100 already
     b_pct  = _pct(buffett_result) if buffett_result else 50   # neutral fallback
 
     # ── Weighted sum ──────────────────────────────────────────────────────────
@@ -217,7 +217,7 @@ def enhanced_composite(
     )
 
     # ── Altman hard cap — distress zone stocks cannot score above 50 ──────────
-    altman_zone = altman_result.get("zone", "unknown")
+    altman_zone = (altman_result or {}).get("zone", "unknown")
     altman_cap_applied = False
     if altman_zone == "distress":
         raw_score = min(raw_score, 50.0)
@@ -239,12 +239,12 @@ def enhanced_composite(
     value_trap_warning = (
         g_pct >= 60 and
         m_pct < 30  and
-        piotroski_result.get("f_score", 5) <= 3
+        piotroski_result.get("f_score", 5) <= 3 if piotroski_result else True
     )
 
     # ── Quality flag: high Piotroski + high Quality + high Buffett ───────────
     compounder_flag = (
-        piotroski_result.get("f_score", 0) >= 7 and
+        (piotroski_result or {}).get("f_score", 0) >= 7 and
         q_pct >= 65 and
         b_pct >= 60
     )

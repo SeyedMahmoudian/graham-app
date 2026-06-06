@@ -465,8 +465,11 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
         paths = np.empty((MC_PATHS, MC_MONTHS + 1))
         paths[:, 0] = start
 
-        # Cholesky for correlated shocks
-        L = np.linalg.cholesky(cov)
+        # Cholesky for correlated shocks — fall back to diagonal if matrix is not PSD
+        try:
+            L = np.linalg.cholesky(cov)
+        except np.linalg.LinAlgError:
+            L = np.diag(np.sqrt(np.maximum(np.diag(cov), 0.0)))
 
         for t in range(1, MC_MONTHS + 1):
             z = rng.normal(0.0, 1.0, size=(MC_PATHS, n_assets))
