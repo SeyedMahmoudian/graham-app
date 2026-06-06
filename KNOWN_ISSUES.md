@@ -343,14 +343,13 @@ Acceptance Criteria:
 **Status:** [ ]  
 **Title:** Project folder structure cleanup  
 **Files:** (many - see original)  
-**Fix:** Group into logical folders  
+**Fix:** Group into logical folders  and make sure all files will work after
 **Criteria:** Clean structure, working imports, tests pass
 
 ---
 
 # CLOSED ISSUES
 
-(None yet)
 
 **TEST RULE**: Add minimal test `test_issue_XXX_*.py` when needed.
 
