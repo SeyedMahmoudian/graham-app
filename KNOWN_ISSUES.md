@@ -310,11 +310,11 @@ Acceptance Criteria:
 
 ## ISSUE-009
 
-**Status:** [ ]  
+**Status:** [x]  
 **Title:** Correlation estimation methodology incorrect  
 **Files:** `portfolio.py`  
 **Fix:** Use covariance-derived correlation matrix  
-**Criteria:** Symmetric matrix, no false independence
+**Criteria:** Symmetric matrix, no false independence, write unit test
 
 ---
 

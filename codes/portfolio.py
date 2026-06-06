@@ -376,34 +376,14 @@ def run_backtest(portfolio: dict) -> dict:
 
 def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
     """
-    2-year forward Monte Carlo using per-stock historical monthly return
-    distribution (mean + std).
-
-    Starting value = backtest final portfolio value (or sum of shares × current
-    price if backtest failed).
-
-    Returns:
-      {
-        "dates":   [str, ...],   # monthly dates from today forward
-        "p10":     [float, ...], # 10th-percentile path
-        "p50":     [float, ...], # median path
-        "p90":     [float, ...], # 90th-percentile path
-        "spy_p10": [float, ...],
-        "spy_p50": [float, ...],
-        "spy_p90": [float, ...],
-        "start_value": float,
-        "error": str | None,
-      }
+    2-year forward Monte Carlo using per-stock historical monthly returns
+    with full covariance-derived correlation matrix (multivariate simulation).
     """
     holdings = portfolio.get("holdings", {})
     if not holdings:
         return {"error": "Portfolio is empty"}
 
     if backtest.get("error"):
-        # Fall back to current prices if backtest didn't run.
-        # shares × price_at_add is the original invested amount and remains
-        # correct after splits — the total value doesn't change on split day,
-        # only the per-share price and count change.
         start_value = sum(
             h["shares"] * h["price_at_add"]
             for h in holdings.values()
@@ -414,48 +394,48 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
     if start_value <= 0:
         return {"error": "Cannot project from zero or negative portfolio value"}
 
-    # Compute per-symbol monthly return stats from history
     symbols = list(holdings.keys())
-    sym_stats:  dict[str, tuple[float, float]] = {}  # sym → (mean_monthly, std_monthly)
-    weights:    dict[str, float] = {}
-    ret_series: dict[str, pd.Series] = {}  # sym → monthly return series for covariance
 
+    # Load returns for covariance
+    ret_series: dict[str, pd.Series] = {}
+    weights: dict[str, float] = {}
     total_val = 0.0
+
     for sym, h in holdings.items():
         price = h.get("price_at_add", 0)
-        val   = h["shares"] * price
+        val = h["shares"] * price
         total_val += val
 
     for sym in symbols:
         df = _load_history(sym)
-        if df.empty or len(df) < 12:
-            # Use a conservative default: 0.6% monthly / 5% std
-            sym_stats[sym] = (0.006, 0.050)
-        else:
+        if not df.empty and len(df) >= 12:
             rets = df["Close"].pct_change().dropna()
-            sym_stats[sym] = (float(rets.mean()), float(rets.std()))
-            ret_series[sym] = rets  # store for covariance computation
+            ret_series[sym] = rets
+        else:
+            # fallback
+            ret_series[sym] = pd.Series([0.006] * 60)  # dummy
 
         price = holdings[sym].get("price_at_add", 1)
-        val   = holdings[sym]["shares"] * price
+        val = holdings[sym]["shares"] * price
         weights[sym] = val / total_val if total_val > 0 else 1 / len(symbols)
 
-    # Portfolio blended monthly stats (weighted)
-    port_mean = sum(weights[s] * sym_stats[s][0] for s in symbols)
-
-    # Covariance-matrix portfolio volatility: σp = sqrt(wᵀ Σ w)
-    valid_cov_syms = [s for s in symbols if s in ret_series]
-    if len(valid_cov_syms) >= 2:
-        ret_df = pd.concat(
-            [ret_series[s].rename(s) for s in valid_cov_syms], axis=1
-        ).dropna()
-        w_arr  = np.array([weights[s] for s in valid_cov_syms])
-        cov_mat = ret_df.cov().values
-        port_var = float(w_arr @ cov_mat @ w_arr)
-        port_std = math.sqrt(max(port_var, 0.0))
+    # ── Build correlation matrix from covariance (ensures symmetry) ──
+    valid_syms = [s for s in symbols if len(ret_series[s]) > 1]
+    if len(valid_syms) >= 2:
+        ret_df = pd.concat([ret_series[s].rename(s) for s in valid_syms], axis=1).dropna()
+        corr_mat = ret_df.corr().values  # correlation matrix (symmetric)
+        stds = ret_df.std().values
+        cov_mat = np.diag(stds) @ corr_mat @ np.diag(stds)  # full covariance
     else:
-        # Fallback: single asset or all histories missing — weighted average std
-        port_std = sum(weights[s] * sym_stats[s][1] for s in symbols)
+        # fallback to independent
+        corr_mat = np.eye(len(symbols))
+        stds = np.array([ret_series[s].std() if len(ret_series[s]) > 1 else 0.05 for s in symbols])
+        cov_mat = np.diag(stds)
+
+    # Portfolio stats (for reference)
+    w_arr = np.array([weights[s] for s in symbols])
+    port_mean = sum(weights[s] * ret_series[s].mean() for s in symbols)
+    port_std = float(np.sqrt(w_arr @ cov_mat @ w_arr))
 
     # SPY stats
     spy_df = _load_history("SPY")
@@ -464,17 +444,16 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
     else:
         spy_rets = spy_df["Close"].pct_change().dropna()
         spy_mean = float(spy_rets.mean())
-        spy_std  = float(spy_rets.std())
+        spy_std = float(spy_rets.std())
 
     spy_start = backtest.get("final_spy", start_value) if not backtest.get("error") else start_value
 
-    # Generate date range
+    # Date range
     today = datetime.date.today()
     future_dates = []
     d = today
     for _ in range(MC_MONTHS + 1):
         future_dates.append(d.strftime("%Y-%m-%d"))
-        # Advance one month
         m = d.month + 1
         y = d.year + (m - 1) // 12
         m = ((m - 1) % 12) + 1
@@ -482,6 +461,33 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
 
     rng = np.random.default_rng(seed=42)
 
+    def _simulate_multivariate(start: float, mu: float, cov: np.ndarray, w: np.ndarray) -> np.ndarray:
+        n_assets = len(w)
+        paths = np.empty((MC_PATHS, MC_MONTHS + 1))
+        paths[:, 0] = start
+
+        # Cholesky for correlated shocks
+        L = np.linalg.cholesky(cov)
+
+        for t in range(1, MC_MONTHS + 1):
+            z = rng.normal(0.0, 1.0, size=(MC_PATHS, n_assets))
+            correlated_returns = z @ L.T
+            # geometric returns
+            growth = np.exp(mu + correlated_returns)
+            asset_paths = paths[:, t-1][:, np.newaxis] * growth
+            # portfolio value = weighted sum
+            paths[:, t] = np.dot(asset_paths, w)
+
+        return paths
+
+    # Drift correction
+    port_geo_mean = port_mean - (port_std ** 2) / 2
+    spy_geo_mean  = spy_mean - (spy_std ** 2) / 2
+
+    # Portfolio paths with full correlation
+    port_paths = _simulate_multivariate(start_value, port_geo_mean, cov_mat, w_arr)
+
+    # SPY (independent)
     def _simulate(start: float, mu_geo: float, std: float) -> np.ndarray:
         paths = np.empty((MC_PATHS, MC_MONTHS + 1))
         paths[:, 0] = start
@@ -489,15 +495,9 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
         for t in range(1, MC_MONTHS + 1):
             growth = np.exp(mu_geo + std * z[:, t - 1])
             paths[:, t] = paths[:, t - 1] * growth
-
         return paths
-    # Ito / geometric drift correction: μ_geo = μ_arith − σ²/2
-    # Prevents arithmetic-mean bias from overstating long-run compounded growth.
-    port_geo_mean = port_mean - (port_std ** 2) / 2
-    spy_geo_mean  = spy_mean  - (spy_std  ** 2) / 2
 
-    port_paths = _simulate(start_value, port_geo_mean, port_std)
-    spy_paths  = _simulate(spy_start,   spy_geo_mean,  spy_std)
+    spy_paths = _simulate(spy_start, spy_geo_mean, spy_std)
 
     def _percentile_paths(paths: np.ndarray, pct: int) -> list[float]:
         return [round(float(np.percentile(paths[:, t], pct)), 2)
@@ -508,14 +508,12 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
         "p10":         _percentile_paths(port_paths, 10),
         "p50":         _percentile_paths(port_paths, 50),
         "p90":         _percentile_paths(port_paths, 90),
-        "spy_p10":     _percentile_paths(spy_paths,  10),
-        "spy_p50":     _percentile_paths(spy_paths,  50),
-        "spy_p90":     _percentile_paths(spy_paths,  90),
+        "spy_p10":     _percentile_paths(spy_paths, 10),
+        "spy_p50":     _percentile_paths(spy_paths, 50),
+        "spy_p90":     _percentile_paths(spy_paths, 90),
         "start_value": round(start_value, 2),
         "error":       None,
     }
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Full simulation (backtest + Monte Carlo)
 # ══════════════════════════════════════════════════════════════════════════════
