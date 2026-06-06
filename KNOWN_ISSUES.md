@@ -195,156 +195,25 @@ No vague instructions allowed.
 
 ## ISSUE-001
 
-Status: [x]
+Status: []
 
-Title: Division by zero in Greenblatt calculation
+Title: 
 
-Priority: Critical
-
-Files:
-
-* greenblatt.py
-
-Problem:
-Division by zero occurs when denominator (likely EV or capital metric) equals 0 during Greenblatt ranking calculation.
-
-Required Fix:
-Add safe-guarded division logic:
-
-* If denominator == 0 → return 0 score OR skip metric consistently
-
-Acceptance Criteria:
-
-* No runtime ZeroDivisionError
-* Unit test added for denominator = 0 case
-* Existing scoring behavior unchanged otherwise
-
----
-
-## ISSUE-002
-
-Status: [x]
-
-Title: Enterprise value calculation correctness
-
-Priority: High
+Priority: 
 
 Files:
 
-* greenblatt.py
-* scorer.py
+* 
 
 Problem:
-Enterprise value formula may be inconsistent or missing adjustments across modules.
 
 Required Fix:
-Standardize EV calculation across all usages.
+
 
 Acceptance Criteria:
 
-* Single EV definition used everywhere
-* No duplicated logic
-* Tests confirm consistency
 
 ---
-
-## ISSUE-003
-
-**Status:** [x]  
-**Title:** Free Cash Flow yield miscalculation  
-**Files:** `greenblatt.py`, `scorer.py`  
-**Fix:** Enforce FCF Yield = FCF / EV with non-zero check  
-**Criteria:** Correct formula, edge case tests
-
----
-
-## ISSUE-004
-
-**Status:** [x]  
-**Title:** Share dilution handling incorrect  
-**Files:** `graham.py`, `piotroski.py`  
-**Fix:** Consistent threshold-based dilution rule  
-**Criteria:** Same logic across files + tests
-
----
-
-## ISSUE-005
-
-**Status:** [x]  
-**Title:** CAGR calculation inconsistencies  
-**Files:** `portfolio.py`
-**Fix:** Standard CAGR with proper time delta  
-**Criteria:** Correct compounding, safe missing periods
-
----
-
-## ISSUE-006
-
-**Status:** [x]  
-**Title:** Earnings normalization inconsistency  
-**Files:** `graham.py`, `altman.py`, `scorer.py`  
-**Fix:** Standardize earnings definition  
-**Criteria:** Consistent input across models
-
----
-
-## ISSUE-007
-
-**Status:** [x]  
-**Title:** Monte Carlo return assumptions incorrect  
-**Files:** `portfolio.py`  
-**Fix:** Use geometric drift μ_geo = μ_arith − σ²/2  
-**Criteria:** Correct drift + validation tests
-
----
-
-## ISSUE-008
-
-**Status:** [x]  
-**Title:** Drawdown calculation incorrect  
-**Files:** `risk_metrics.py`  
-**Fix:** Proper peak-to-trough tracking  
-**Criteria:** Correct max drawdown, handles negative series
-
----
-
-## ISSUE-009
-
-**Status:** [x]  
-**Title:** Correlation estimation methodology incorrect  
-**Files:** `portfolio.py`  
-**Fix:** Use covariance-derived correlation matrix  
-**Criteria:** Symmetric matrix, no false independence, write unit test
-
----
-
-## ISSUE-010
-
-**Status:** [x]  
-**Title:** Survivorship bias in data handling  
-**Files:** `sec_data.py`  
-**Fix:** Document + mitigate bias  
-**Criteria:** Bias acknowledged, optional handling
-
----
-
-## ISSUE-011
-
-**Status:** [ ]  
-**Title:** Missing financial statement handling  
-**Files:** `sec_data.py`, `graham.py`, `piotroski.py`, `altman.py`, `portfolio.py`, `risk_metrics.py`, `scorer.py`  
-**Fix:** Standardize None checks + fallbacks + generate test unit to test the fixes 
-**Criteria:** No silent NaN, safe handling
-
----
-
-## ISSUE-012
-
-**Status:** [ ]  
-**Title:** Project folder structure cleanup  
-**Files:** (many - see original)  
-**Fix:** Group into logical folders  and make sure all files will work after
-**Criteria:** Clean structure, working imports, tests pass
 
 ---
 
