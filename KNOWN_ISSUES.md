@@ -212,10 +212,30 @@ Required Fix:
 
 Acceptance Criteria:
 * any stock entering negative saftey margin is no longer a buy and should be down graded to weak
+* if only one , either grahm or buffet have negative margin of safety there should be new label indicating that
 
 ---
 
----
+## ISSUE-002
+
+Status: []
+
+Title: Finhub price history
+
+Priority: Normal
+
+Files: alpha_vantage_client.py
+
+* 
+
+Problem:
+*   [Finnhub SDK] candle error for ISRG: FinnhubAPIException(status_code: 403): You don't have access to this resource.
+
+
+Acceptance Criteria:
+* be able to fetch informatino from finhub, because it has never worked and we are over using alpha vantage 
+
+
 
 # CLOSED ISSUES
 
