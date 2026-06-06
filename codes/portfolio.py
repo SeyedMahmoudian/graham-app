@@ -482,15 +482,15 @@ def run_montecarlo(portfolio: dict, backtest: dict) -> dict:
 
     rng = np.random.default_rng(seed=42)
 
-    def _simulate(start: float, mean: float, std: float) -> np.ndarray:
-        """Run MC_PATHS simulations, return array (MC_PATHS, MC_MONTHS+1)."""
+    def _simulate(start: float, mu_geo: float, std: float) -> np.ndarray:
         paths = np.empty((MC_PATHS, MC_MONTHS + 1))
         paths[:, 0] = start
-        shocks = rng.normal(mean, std, size=(MC_PATHS, MC_MONTHS))
+        z = rng.normal(0.0, 1.0, size=(MC_PATHS, MC_MONTHS))
         for t in range(1, MC_MONTHS + 1):
-            paths[:, t] = paths[:, t - 1] * (1 + shocks[:, t - 1])
-        return paths
+            growth = np.exp(mu_geo + std * z[:, t - 1])
+            paths[:, t] = paths[:, t - 1] * growth
 
+        return paths
     # Ito / geometric drift correction: μ_geo = μ_arith − σ²/2
     # Prevents arithmetic-mean bias from overstating long-run compounded growth.
     port_geo_mean = port_mean - (port_std ** 2) / 2

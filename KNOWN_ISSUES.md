@@ -290,7 +290,7 @@ Acceptance Criteria:
 
 ## ISSUE-007
 
-**Status:** [ ]  
+**Status:** [x]  
 **Title:** Monte Carlo return assumptions incorrect  
 **Files:** `portfolio.py`  
 **Fix:** Use geometric drift μ_geo = μ_arith − σ²/2  
