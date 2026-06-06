@@ -457,7 +457,8 @@ body {
     width: 36px;
     text-align: right;
     padding-right: 10px;
-    @include media.phones{
+
+    @include media.phones {
       text-align: left;
     }
   }
@@ -1129,7 +1130,10 @@ body {
   }
 }
 
-.quant_row {
+.quant_row,
+.card-row,
+.moment_quality_row,
+.risk-row {
   display: flex;
   flex-direction: row;
   gap: 16px;
@@ -1141,6 +1145,45 @@ body {
 
   .scorecard {
     flex: 1 1 50%;
+  }
+}
+
+.risk-row {
+  .metric_cell {
+    display: flex;
+    flex-wrap: wrap;
+    flex: 1 1 50%;
+
+    p {
+    width: 100%;
+    }
+
+    div {
+      flex: 1 1 50%;
+
+      border-radius: 8px;
+      padding: 10px 14px;
+      border: 1px solid rgb(42, 45, 62);
+      min-width: 140px;
+
+      p {
+        &:nth-child(1) {
+          font-size: 11px;
+          color: rgb(158, 158, 158);
+          margin-bottom: 4px;
+        }
+
+        &:nth-child(2) {
+          font-size: 18px;
+          font-weight: 700;
+          color: rgb(255, 193, 7);
+        }
+      }
+    }
+
+    &+div {
+      flex: 1 1 50%;
+    }
   }
 }
 

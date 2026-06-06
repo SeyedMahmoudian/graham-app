@@ -1231,28 +1231,28 @@ def _risk_card(data: dict) -> html.Div:
 
     metric_cells = [
         html.Div(style={
-            "background": DARK, "borderRadius": "8px", "padding": "10px 14px",
-            "border": f"1px solid {BORDER}", "minWidth": "140px",
+          
         }, children=[
-            html.Div(lbl, style={"fontSize": "11px", "color": MUTED,
-                                 "marginBottom": "4px"}),
-            html.Div(val, style={"fontSize": "18px", "fontWeight": "700",
-                                 "color": col}),
+            html.P(lbl),
+            html.P(val),
         ])
         for lbl, val, col in metrics
     ]
 
     risk_criteria = r.get("risk_criteria") or []
 
-    return html.Div(className="scorecard", children=[
-        html.Div(f"Risk & Performance — {n_yrs:.0f}yr History",
-                 style={"fontSize": "14px", "fontWeight": "700", "color": TEXT,
-                        "padding": "14px 18px 12px"}),
-        html.Div(metric_cells,
-                 style={"display": "flex", "flexWrap": "wrap", "gap": "10px",
-                        "padding": "0 16px 16px"}),
-        _render_scorecard("Risk Score Breakdown", risk_criteria, "risk")
-        if risk_criteria else html.Div(),
+    return html.Div(children=[
+      
+        html.Div(className="risk-row",children=[
+            
+            html.Div( className="metric_cell scorecard",children=[
+                    html.P(
+                    f"Risk & Performance — {n_yrs:.0f}yr History", className="scorecard-header"
+                ),
+                *metric_cells
+            ]),_render_scorecard("Risk Score Breakdown", risk_criteria, "risk")
+                        ]),
+        
     ])
 
 
@@ -1341,14 +1341,17 @@ def _build_analysis_content(data: dict) -> list:
     ])
 
     banner = _composite_banner(data)
-
+    
     graham_card   = _render_scorecard("Graham Value Analysis", g["criteria"], "graham")
     quality_card  = _render_scorecard("Quality Analysis",      q["criteria"], "quality")
+    value_row=html.Div(className="card-row",children=[
+        quality_card,graham_card 
+    ])
     buffett_card  = (_render_scorecard("Buffett Quality & Value", b_data["criteria"], "buffett")
                      if b_data.get("criteria") else html.Div())
     momentum_card = (_render_scorecard("Momentum Analysis", m["criteria"], "momentum")
                      if m.get("criteria") else html.Div())
-
+    moment_quality_row=html.Div(className="moment_quality_row",children=[buffett_card,momentum_card])
     # New quant cards — side by side when both available
     piotroski_card = _piotroski_card(data)
     altman_card    = _altman_card(data)
@@ -1357,7 +1360,7 @@ def _build_analysis_content(data: dict) -> list:
     ]) if p_data and a_data else html.Div()
 
     risk_card = _risk_card(data)
-
+   
     charts_row = html.Div(className="charts-grid", children=[
         _eps_chart(g.get("eps_history", []), symbol),
         _price_chart(data.get("price_history"), data.get("spy_history"), symbol),
@@ -1368,7 +1371,7 @@ def _build_analysis_content(data: dict) -> list:
     buffett_details = _buffett_details_card(data)
 
     return [header, banner,
-            graham_card, buffett_card, quality_card, momentum_card,
+            value_row, moment_quality_row,
             quant_row, risk_card,
             charts_row, div_chart,
             html.Div(className="grid-2 gap-16 grid",
