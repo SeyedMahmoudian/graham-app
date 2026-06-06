@@ -30,9 +30,8 @@ import time
 import datetime
 import numpy as np
 import pandas as pd
-
-from codes import cache
-from codes import alpha_vantage_client
+import cache
+import alpha_vantage_client
 
 MAX_HOLDINGS  = 10
 MIN_SHARES    = 5

@@ -16,7 +16,7 @@ Scoring breakdown (100 points total):
 
 import math
 import numpy as np
-from codes.piotroski import DILUTION_TOLERANCE
+from piotroski import DILUTION_TOLERANCE
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

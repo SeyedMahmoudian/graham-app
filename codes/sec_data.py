@@ -48,7 +48,7 @@ Mitigation in this module:
 
 import requests
 import pandas as pd
-from codes import cache
+import cache
 
 SEC_HEADERS = {"User-Agent": "GrahamScoreApp/1.0 contact@example.com"}
 FACTS_URL   = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"

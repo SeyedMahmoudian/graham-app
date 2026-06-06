@@ -18,7 +18,7 @@ import requests
 import finnhub
 import pandas as pd
 
-from codes.cache import read, write
+from cache import read, write
 
 # ── Finnhub config ────────────────────────────────────────────────────────────
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
