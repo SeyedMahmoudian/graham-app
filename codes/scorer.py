@@ -202,7 +202,7 @@ def enhanced_composite(
     m_pct  = _pct(momentum_result)
     f_pct  = (piotroski_result.get("f_score", 0) / 9 * 100)  # 0-9 scale
     r_pct  = _pct(risk_result, "risk_score", "risk_score_max")
-    a_pct  = altman_result.get("risk_score", 50)              # 0-100 already
+    a_pct  = altman_result.get("risk_score", 50) or 50           # 0-100 already
     b_pct  = _pct(buffett_result) if buffett_result else 50   # neutral fallback
 
     # ── Weighted sum ──────────────────────────────────────────────────────────
@@ -218,11 +218,12 @@ def enhanced_composite(
 
     # ── Altman hard cap — distress zone stocks cannot score above 50 ──────────
     altman_zone = altman_result.get("zone", "unknown")
+    altman_cap_applied = False
     if altman_zone == "distress":
         raw_score = min(raw_score, 50.0)
         altman_cap_applied = True
-    else:
-        altman_cap_applied = False
+    elif altman_zone == "grey":
+        raw_score = max(0, raw_score - 10)
 
     composite_score = round(raw_score, 1)
 
@@ -279,7 +280,9 @@ def enhanced_composite(
         "verdict_desc":      description,
 
         # Flags
-        "value_trap_warning":  value_trap_warning,
+        "value_trap_warning": (
+            value_trap_warning or altman_zone in ("distress", "grey")
+        ),
         "compounder_flag":     compounder_flag,
         "altman_cap_applied":  altman_cap_applied,
 

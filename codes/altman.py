@@ -87,7 +87,7 @@ def score(price: float | None, sec: dict) -> dict:
     cur_lib  = _first(sec.get("cur_lib",          []))
     tot_ast  = _first(sec.get("total_assets",     []))
     ret_earn = _first(sec.get("retained_earnings",[]))
-    op_inc   = _first(sec.get("op_income",        []))
+    ebit = _first(sec.get("ebit", []))
     shares   = _first(sec.get("shares",           []))
     tot_lib  = _first(sec.get("tot_lib",          []))
     revenue  = _first(sec.get("revenue",          []))
@@ -101,7 +101,7 @@ def score(price: float | None, sec: dict) -> dict:
     # ── Compute components ────────────────────────────────────────────────────
     x1 = (wc      / tot_ast) if (wc is not None   and tot_ast and tot_ast > 0) else None
     x2 = (ret_earn / tot_ast) if (ret_earn is not None and tot_ast and tot_ast > 0) else None
-    x3 = (op_inc  / tot_ast) if (op_inc is not None   and tot_ast and tot_ast > 0) else None
+    x3 = (ebit / tot_ast) if ebit is not None and tot_ast and tot_ast > 0 else None
     x4 = (mkt_cap / tot_lib) if (mkt_cap and tot_lib and tot_lib > 0)              else None
     x5 = (revenue / tot_ast) if (revenue and tot_ast and tot_ast > 0)              else None
 

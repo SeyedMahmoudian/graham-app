@@ -280,7 +280,7 @@ Acceptance Criteria:
 
 ## ISSUE-006
 
-**Status:** [ ]  
+**Status:** [x]  
 **Title:** Earnings normalization inconsistency  
 **Files:** `graham.py`, `altman.py`, `scorer.py`  
 **Fix:** Standardize earnings definition  
