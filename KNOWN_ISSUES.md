@@ -285,6 +285,27 @@ Acceptance Criteria:
 * display earning_revision result in analyze tab
 
 ---
+---
+
+## ISSUE-004
+
+Status: []
+
+Title: Veirfy new coloring system
+
+Priority: Low
+
+Files: app.py
+
+* 
+
+Problem:
+*  the new coloring system in stats row must be logical, if the low number is good then the colors must be green and if higher is worse then red.
+
+Acceptance Criteria:
+* corrected and verified that color picking is valid
+
+---
 
 # CLOSED ISSUES
 
