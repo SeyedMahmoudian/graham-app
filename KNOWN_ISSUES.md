@@ -236,6 +236,27 @@ Problem:
 Acceptance Criteria:
 * corrected and verified that color picking is valid
 
+
+---
+
+## ISSUE-003
+
+Status: []
+
+Title: touch is not working in mobile
+
+Priority: Low
+
+Files: app.py
+
+* 
+
+Problem:
+*  in mobile view when clicking on ticker symbol nothin happens, the touch functino does not get triggered
+
+Acceptance Criteria:
+* be able to use touch to click on symbol and get analyze tab
+
 ---
 
 # CLOSED ISSUES
