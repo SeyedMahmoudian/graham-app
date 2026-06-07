@@ -58,7 +58,7 @@ RATE LIMITING
 ─────────────────────────────────────────────────────────────────────────────
 BACKWARDS-COMPATIBLE SHIMS
   _fh_rate_limit() and _av_rate_limit() are kept as no-op shims so any
-  module that imports them (e.g. EarningsRevision via api_fetcher)
+  module that imports them (e.g. EarningsRevision via alpha_vantage_client)
   does not break with AttributeError.  Migrate those callers to use the
   RateLimiter instances directly when convenient.
 """
@@ -717,7 +717,6 @@ def get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
     df = pd.DataFrame()
 
     if TIINGO_API_KEY:
-        print(f"  [Tiingo] fetching {years}yr history for {symbol}...")
         try:
             df = _tiingo_get_price_history(symbol, years)
         except RateLimitError:
@@ -804,7 +803,7 @@ def rate_limit_status() -> list[dict]:
 # Backwards-compatibility shims
 # ══════════════════════════════════════════════════════════════════════════════
 # Kept so that any module importing _fh_rate_limit or _av_rate_limit
-# (e.g. EarningsRevision via the old api_fetcher) doesn't break
+# (e.g. EarningsRevision via the old alpha_vantage_client) doesn't break
 # with AttributeError.  Migrate callers to RateLimiter instances when convenient.
 
 def _fh_rate_limit() -> None:

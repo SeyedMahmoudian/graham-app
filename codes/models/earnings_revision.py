@@ -43,13 +43,20 @@ Data source: Finnhub SDK (FINNHUB_API_KEY env var; already wired in api_fetcher)
   revenue_estimates()        -> forward quarterly revenue consensus
   recommendation_trends()    -> monthly analyst buy/sell breadth
 
+  ⚠️  FREE TIER NOTE: earnings_surprises, eps_estimates, revenue_estimates,
+  and recommendation_trends are NOT available on the Finnhub free plan.
+  These methods are absent from the free SDK client entirely (not rate-limited).
+  All four fetchers will return empty results silently.  The model still runs
+  but all four components default to neutral (50 pts each → score = 50.0,
+  signal = NEUTRAL).  To unlock this model upgrade to a paid Finnhub plan,
+  or replace the data source with Alpha Vantage EARNINGS endpoint (free, 25/day).
+
 Note on revision proxies:
   True point-in-time revision (Q2-2025 consensus on March 1 vs April 1) requires
   FMP or Polygon paid tier.  We use two valid proxies:
     (a) Slope of consecutive EPS estimates across forward periods
     (b) Trend in earnings surprise % (improving beats => upward revision signal)
   Both are empirically correlated with future returns (SUE literature).
-  For production accuracy upgrade to FMP: https://site.financialmodelingprep.com
 """
 
 import math
@@ -67,6 +74,15 @@ SIGNAL_THRESHOLDS: list[tuple[int, str]] = [
     (25, "DOWN"),
     (0,  "STRONG_DOWN"),
 ]
+
+# Finnhub paid-tier methods absent from free SDK client.
+# Checked once at module load via hasattr() in each fetcher.
+_FH_PAID_METHODS = {
+    "earnings_surprises",
+    "eps_estimates",
+    "revenue_estimates",
+    "recommendation_trends",
+}
 
 
 # ── Pure helpers ──────────────────────────────────────────────────────────────
@@ -136,14 +152,28 @@ def _filter_outliers(values: list, k: float = 3.0) -> list:
     return [v for v in values if abs(v - median) <= threshold]
 
 
+# ── Finnhub paid-tier availability check ──────────────────────────────────────
+
+def _fh_method_available(method_name: str) -> bool:
+    """
+    Return True only if the Finnhub client exists AND the method is present
+    on it.  On the free SDK these four methods are absent entirely —
+    hasattr() is the correct guard; trying and catching AttributeError
+    produces noisy log output on every call.
+    """
+    return (
+        _av._fh_client is not None
+        and hasattr(_av._fh_client, method_name)
+    )
+
+
 # ── Data fetchers (wrap Finnhub SDK, return [] on any error) ─────────────────
 
 def _fetch_earnings_surprises(symbol: str) -> list:
     """Quarterly earnings surprises [{period, actual, estimate, surprise_pct}] newest-first."""
-    if not _av._fh_client:
+    if not _fh_method_available("earnings_surprises"):
         return []
     try:
-        _av._fh_rate_limit()
         raw = _av._fh_client.earnings_surprises(symbol) or []
         results = []
         for item in raw:
@@ -165,10 +195,9 @@ def _fetch_earnings_surprises(symbol: str) -> list:
 
 def _fetch_eps_estimates(symbol: str) -> list:
     """Forward quarterly EPS consensus [{period, eps_avg, n_analyst}] newest-first."""
-    if not _av._fh_client:
+    if not _fh_method_available("eps_estimates"):
         return []
     try:
-        _av._fh_rate_limit()
         data  = _av._fh_client.eps_estimates(symbol, freq="quarterly") or {}
         items = data.get("data") or []
         results = []
@@ -191,10 +220,9 @@ def _fetch_eps_estimates(symbol: str) -> list:
 
 def _fetch_revenue_estimates(symbol: str) -> list:
     """Forward quarterly revenue consensus [{period, rev_avg, n_analyst}] newest-first."""
-    if not _av._fh_client:
+    if not _fh_method_available("revenue_estimates"):
         return []
     try:
-        _av._fh_rate_limit()
         data  = _av._fh_client.revenue_estimates(symbol, freq="quarterly") or {}
         items = data.get("data") or []
         results = []
@@ -217,10 +245,9 @@ def _fetch_revenue_estimates(symbol: str) -> list:
 
 def _fetch_recommendation_trends(symbol: str) -> list:
     """Monthly analyst recommendation snapshots [{period, strong_buy, buy, hold, sell, strong_sell}] newest-first."""
-    if not _av._fh_client:
+    if not _fh_method_available("recommendation_trends"):
         return []
     try:
-        _av._fh_rate_limit()
         raw = _av._fh_client.recommendation_trends(symbol) or []
         results = []
         for item in raw:
@@ -382,6 +409,11 @@ def get_revision_score(symbol: str) -> dict:
     Compute earnings revision / forward momentum score for a single stock.
 
     Compatible with enhanced_composite() in scorer.py via total_score / total_max.
+
+    When the Finnhub free tier is in use, all four data fetchers return empty
+    results and every component defaults to neutral (50 pts).  The final score
+    will be 50.0 / NEUTRAL for every symbol.  No errors are raised — the model
+    runs cleanly and the caller can check n_available == 0 to detect this case.
 
     Args:
         symbol: Stock ticker (e.g. 'AAPL').
