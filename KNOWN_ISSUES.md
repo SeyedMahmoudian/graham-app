@@ -193,28 +193,7 @@ No vague instructions allowed.
 
 ---
 
-## ISSUE-001
 
-Status: []
-
-Title: Maring of safety
-
-Priority: Normal
-
-Files: scorer.py
-
-* 
-
-Problem:
-*  if margin of saftey is negative from both grahm and buffet we should not advertise buy , and if we still can buy it should come with a big warning
-Required Fix:
-* modify buy crataria to never promot negative margin of saftey stocks to be in buy list
-
-Acceptance Criteria:
-* any stock entering negative saftey margin is no longer a buy and should be down graded to weak
-* if only one , either grahm or buffet have negative margin of safety there should be new label indicating that
-
----
 
 ## ISSUE-002
 
