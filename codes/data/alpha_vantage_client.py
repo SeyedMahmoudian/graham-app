@@ -1,19 +1,30 @@
 """
-Price data via Finnhub (primary) with Alpha Vantage as fallback.
+Price data client.
 
-Finnhub free tier: 60 calls/min, no daily cap.
+Source priority:
+  Real-time quote : Finnhub → FMP → Alpha Vantage
+  Price history   : FMP (primary) → Alpha Vantage (fallback)
+  Split history   : Finnhub → Alpha Vantage
+
+FMP (Financial Modeling Prep) free tier: unlimited historical daily prices.
+Get your free key at: https://financialmodelingprep.com/developer/docs
+Set env var: FMP_API_KEY=your_key
+
+Finnhub free tier: 60 calls/min, real-time quotes only.
 Get your free key at: https://finnhub.io/register
 Set env var: FINNHUB_API_KEY=your_key
 Install SDK:  pip install finnhub-python
 
-Alpha Vantage fallback: 25 calls/day, 5 calls/min.
+Alpha Vantage (last-resort fallback): 25 calls/day, 5 calls/min.
 Get your free key at: https://www.alphavantage.co/support/#api-key
 Set env var: AV_API_KEY=your_key
+
+NOTE: Finnhub stock_candles() is NOT used — it returns 403 for many symbols
+on the free tier.  All historical data goes through FMP.
 """
 
 import os
 import time
-import math
 import requests
 import finnhub
 import pandas as pd
@@ -31,7 +42,11 @@ _fh_client: finnhub.Client | None = (
     finnhub.Client(api_key=FINNHUB_API_KEY) if FINNHUB_API_KEY else None
 )
 
-# ── Alpha Vantage fallback config ─────────────────────────────────────────────
+# ── FMP (Financial Modeling Prep) — primary history source ───────────────────
+FMP_API_KEY  = os.getenv("FMP_API_KEY", "")
+FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
+
+# ── Alpha Vantage — last-resort fallback ──────────────────────────────────────
 AV_API_KEY       = os.getenv("AV_API_KEY", "demo")
 AV_BASE_URL      = "https://www.alphavantage.co/query"
 _AV_MIN_INTERVAL = 12    # 5 calls/min on free tier
@@ -104,49 +119,74 @@ def _fh_get_price(symbol: str) -> float | None:
     return None
 
 
-def _fh_get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
+# ══════════════════════════════════════════════════════════════════════════════
+# FMP implementation  (primary for all historical data)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fmp_get_price(symbol: str) -> float | None:
+    """Real-time quote from FMP (used as Finnhub fallback)."""
+    if not FMP_API_KEY:
+        return None
+    try:
+        url  = f"{FMP_BASE_URL}/quote-short/{symbol.upper()}"
+        resp = requests.get(url, params={"apikey": FMP_API_KEY}, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+        if data and isinstance(data, list):
+            price = data[0].get("price")
+            if price and float(price) > 0:
+                return round(float(price), 2)
+    except Exception as e:
+        print(f"  [FMP] quote error for {symbol}: {e}")
+    return None
+
+
+def _fmp_get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
     """
-    Finnhub stock_candles() pages backwards in 1-year chunks.
-    Resolution "M" = monthly candles.
+    Fetch daily price history from FMP and resample to monthly.
+    Endpoint: /api/v3/historical-price-full/{symbol}?from=YYYY-MM-DD&apikey=...
+    No rate-limit concerns on FMP free tier for this endpoint.
     """
-    if not _fh_client:
+    if not FMP_API_KEY:
         return pd.DataFrame()
 
-    now      = int(time.time())
-    t_end    = now
-    all_rows = []
-
-    for _ in range(years):
-        t_start = t_end - (365 * 24 * 3600)
-        try:
-            _fh_rate_limit()
-            data = _fh_client.stock_candles(
-                symbol.upper(), "M", t_start, t_end
-            )
-        except Exception as e:
-            print(f"  [Finnhub SDK] candle error for {symbol}: {e}")
-            break
-
-        if not data or data.get("s") != "ok":
-            # "no_data" for that range is normal for older years; stop early
-            break
-
-        for ts, close in zip(data.get("t", []), data.get("c", [])):
-            if close and math.isfinite(float(close)):
-                all_rows.append({
-                    "Date":  pd.Timestamp(ts, unit="s").strftime("%Y-%m-%d"),
-                    "Close": round(float(close), 4),
-                })
-
-        t_end = t_start  # move window back
-
-    if not all_rows:
+    cutoff = (pd.Timestamp.now() - pd.DateOffset(years=years)).strftime("%Y-%m-%d")
+    url    = f"{FMP_BASE_URL}/historical-price-full/{symbol.upper()}"
+    try:
+        resp = requests.get(
+            url,
+            params={"apikey": FMP_API_KEY, "from": cutoff},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"  [FMP] price history error for {symbol}: {e}")
         return pd.DataFrame()
 
-    df = pd.DataFrame(all_rows)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.drop_duplicates("Date").sort_values("Date").reset_index(drop=True)
-    df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
+    historical = data.get("historical", [])
+    if not historical:
+        print(f"  [FMP] no historical data for {symbol}")
+        return pd.DataFrame()
+
+    df = (
+        pd.DataFrame(historical)[["date", "close"]]
+        .rename(columns={"date": "Date", "close": "Close"})
+    )
+    df["Date"]  = pd.to_datetime(df["Date"])
+    df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+    df = df.dropna().sort_values("Date").reset_index(drop=True)
+
+    # Resample to monthly (last trading day of each month)
+    try:
+        df = df.set_index("Date").resample("ME").last().dropna().reset_index()
+    except ValueError:
+        # pandas < 2.2 uses "M" instead of "ME"
+        df = df.set_index("Date").resample("M").last().dropna().reset_index()
+
+    df["Date"]  = df["Date"].dt.strftime("%Y-%m-%d")
+    df["Close"] = df["Close"].round(4)
+    print(f"  [FMP] {len(df)} monthly rows for {symbol} ({years}yr)")
     return df
 
 
@@ -222,7 +262,7 @@ def _av_get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_price(symbol: str) -> float | None:
-    """Current price: Finnhub first, Alpha Vantage fallback."""
+    """Current price: Finnhub → FMP → Alpha Vantage."""
     symbol = symbol.upper().strip()
 
     if _fh_client:
@@ -230,7 +270,14 @@ def get_price(symbol: str) -> float | None:
         price = _fh_get_price(symbol)
         if price:
             return price
-        print(f"  [Finnhub] no price, falling back to Alpha Vantage...")
+        print(f"  [Finnhub] no price, trying FMP...")
+
+    if FMP_API_KEY:
+        print(f"  [FMP] fetching price for {symbol}...")
+        price = _fmp_get_price(symbol)
+        if price:
+            return price
+        print(f"  [FMP] no price, falling back to Alpha Vantage...")
 
     print(f"  [AlphaVantage] fetching price for {symbol}...")
     return _av_get_price(symbol)
@@ -239,8 +286,9 @@ def get_price(symbol: str) -> float | None:
 def get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
     """
     Monthly price history for `years` years.
-    Finnhub first (pages year-by-year), Alpha Vantage fallback.
-    Result is cached for 6 months.
+    FMP primary → Alpha Vantage fallback.
+    Finnhub stock_candles() is NOT used (403 errors on free tier).
+    Result is cached.
     """
     symbol = symbol.upper().strip()
 
@@ -250,12 +298,11 @@ def get_price_history(symbol: str, years: int = 10) -> pd.DataFrame:
 
     df = pd.DataFrame()
 
-    if _fh_client:
-        print(f"  [Finnhub] fetching {years}yr history for {symbol} "
-              f"({years} paged calls)...")
-        df = _fh_get_price_history(symbol, years)
+    if FMP_API_KEY:
+        print(f"  [FMP] fetching {years}yr history for {symbol}...")
+        df = _fmp_get_price_history(symbol, years)
         if df.empty:
-            print(f"  [Finnhub] no history returned, falling back to Alpha Vantage...")
+            print(f"  [FMP] no history returned, falling back to Alpha Vantage...")
 
     if df.empty:
         print(f"  [AlphaVantage] fetching {years}yr history for {symbol}...")
