@@ -195,7 +195,7 @@ No vague instructions allowed.
 
 ## ISSUE-001
 
-Status: []
+Status: [closed]
 
 Title: Fix error for EarningsRevision
 
@@ -258,9 +258,6 @@ Acceptance Criteria:
 * be able to use touch to click on symbol and get analyze tab
 
 ---
-
-# CLOSED ISSUES
-
 
 **TEST RULE**: Add minimal test `test_issue_XXX_*.py` when needed.
 
