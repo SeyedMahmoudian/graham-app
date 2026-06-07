@@ -201,7 +201,7 @@ Title: Fix error for EarningsRevision
 
 Priority: High
 
-Files: price_client.py
+Files: api_fetcher.py earnings_revision.py
 
 *
 
@@ -218,7 +218,7 @@ Acceptance Criteria:
 
 ---
 
-## ISSUE-004
+## ISSUE-002
 
 Status: []
 
