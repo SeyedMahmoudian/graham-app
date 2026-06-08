@@ -1118,6 +1118,11 @@ body {
 }
 
 #tab-analyze {
+  #analysis-content{
+    @include media.phones {
+     width: 100%;
+    }
+  }
   .infolayer {
     .scrollbox {
       position: absolute;
