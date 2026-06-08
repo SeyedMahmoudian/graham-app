@@ -754,22 +754,25 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, current_page
                 "background": "#2a1e00", "border": f"1px solid {AMBER}55",
                 "borderRadius": "4px", "padding": "1px 5px",
             }))
-        ticker_cell = html.Td(html.Div([
-            html.Button(sym, id={"type": "screener-ticker-btn", "index": sym},
-            className="ticker-link-btn", n_clicks=0,
+        # n_clicks on <td> not <button> — iOS Safari drops touch on <button> inside <table>
+        ticker_cell = html.Td(
+            html.Div([
+                html.Span(sym, className="ticker-link-btn"),
+                html.Div(badges, style={"display": "flex", "gap": "4px",
+                                        "flexWrap": "wrap", "marginTop": "3px"})
+                if badges else html.Div(),
+            ]),
+            id={"type": "screener-ticker-btn", "index": sym},
+            n_clicks=0,
+            className="ticker-cell",
             style={
-                "touchAction": "manipulation",
                 "cursor": "pointer",
-                "WebkitUserSelect": "none",
-                "userSelect": "none",
+                "touchAction": "manipulation",
                 "WebkitTapHighlightColor": "rgba(0,0,0,0.08)",
-                "minWidth": "44px",
-                "minHeight": "44px",
-            }),
-            html.Div(badges, style={"display": "flex", "gap": "4px",
-                                    "flexWrap": "wrap", "marginTop": "3px"})
-            if badges else html.Div(),
-        ]), className="ticker-cell")
+                "userSelect": "none",
+                "WebkitUserSelect": "none",
+            }
+        )
         # Graham Number cell — populated after full analysis
         gn    = r.get("graham_number")
         price = r.get("price")
@@ -2310,59 +2313,7 @@ def run_simulation(n, active, compare):
         ]
     return sections
 
-# ── Mobile Touch Bridge (event delegation on touchend) ───────────────────────
-# Replaces the old touchstart→per-element-touchend approach which broke when
-# the screener table re-rendered between touchstart and touchend (dead elements).
-# Event delegation on touchend always resolves the live DOM node.
-app.clientside_callback(
-    """
-    function(_) {
-        // ISSUE-003 root cause: the screener interval re-renders the table every 2s.
-        // If a re-render fires between touchstart and touchend, e.target in touchend
-        // points to a detached DOM node — click() on detached nodes is a no-op.
-        //
-        // Fix: record the ticker *text* on touchstart (before any re-render), then
-        // on touchend query the LIVE .ticker-link-btn with that text and click it.
-        var _pendingTicker = null;
-        var _touchStartY   = 0;
-
-        document.addEventListener('touchstart', function(e) {
-            _pendingTicker = null;
-            var t = e.target;
-            while (t && t !== document.body) {
-                if (t.classList && t.classList.contains('ticker-link-btn')) {
-                    _pendingTicker = t.textContent.trim();
-                    _touchStartY   = e.touches[0].clientY;
-                    break;
-                }
-                t = t.parentElement;
-            }
-        }, { passive: true });
-
-        document.addEventListener('touchend', function(e) {
-            if (!_pendingTicker) return;
-            var ticker = _pendingTicker;
-            _pendingTicker = null;
-            // Ignore if finger moved > 10px (scroll gesture, not tap)
-            if (Math.abs(e.changedTouches[0].clientY - _touchStartY) >= 10) return;
-            e.preventDefault();
-            // Find the live button — survives re-renders between touchstart and touchend
-            var buttons = document.querySelectorAll('.ticker-link-btn');
-            for (var i = 0; i < buttons.length; i++) {
-                if (buttons[i].textContent.trim() === ticker) {
-                    buttons[i].click();
-                    return;
-                }
-            }
-        }, { passive: false });
-
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("loading-trigger", "id"),
-    Input("loading-trigger", "id"),
-    prevent_initial_call=False
-)
+# Touch bridge removed — ticker n_clicks now on <td> which handles touch natively on all browsers (ISSUE-003)
 
 # ── Mobile fix: scroll screener to top when tab becomes visible ───────────────
 # On mobile, returning to the screener tab should scroll back to the table top
