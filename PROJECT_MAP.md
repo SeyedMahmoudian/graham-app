@@ -312,125 +312,66 @@ Priority definitions:
 
 ### fcf_quality.py
 
-Implement `FCFQualityAnalyzer`.
+Implement FCFQualityAnalyzer.
 
-### Goal
+Goal:
+- Measure earnings quality using 10Y cash-flow history.
+- Use all available fiscal years (up to 10Y).
 
-Measure earnings quality using 10Y cash-flow history.
+Metrics:
+- FCF Margin (25%)
+- FCF Conversion (25%)
+- FCF Stability (20%)
+- FCF Growth Consistency (15%)
+- Accrual Ratio (15%)
 
-Use all available fiscal years (up to 10Y).
+Additional Outputs:
+- FCF
+- OCF
+- CapEx
+- FCF CAGR 5Y
 
-### Metrics
+Methods:
+- calc_fcf
+- calc_fcf_margin
+- calc_fcf_conversion
+- calc_fcf_stability
+- calc_fcf_growth_consistency
+- calc_accrual_ratio
+- get_fcf_quality_score
 
-* FCF Margin (25%)
-* FCF Conversion (25%)
-* FCF Stability (20%)
-* FCF Growth Consistency (15%)
-* Accrual Ratio (15%)
-
-### Definitions
-
-FCF = Operating Cash Flow - CapEx
-
-FCF Margin = FCF / Revenue
-
-FCF Conversion = FCF / Net Income
-
-FCF Stability = inverse volatility of FCF Margin over available years
-
-FCF Growth Consistency = positive FCF growth frequency + FCF CAGR quality
-
-Accrual Ratio = (Net Income - Operating Cash Flow) / Average Total Assets
-
-### Additional Outputs
-
-* FCF
-* Operating Cash Flow
-* CapEx
-* FCF CAGR 5Y
-* FCF CAGR 10Y
-
-### Methods
-
-* calc_fcf
-* calc_fcf_margin
-* calc_fcf_conversion
-* calc_fcf_stability
-* calc_fcf_growth_consistency
-* calc_accrual_ratio
-* calc_fcf_cagr
-* get_fcf_quality_score
-
-### Output (STRICT JSON)
+Output JSON:
 
 {
-"ticker": str,
-"fcf": float,
-"operating_cash_flow": float,
-"capex": float,
-"fcf_margin": float,
-"fcf_conversion": float,
-"fcf_stability": float,
-"fcf_growth_consistency": float,
-"accrual_ratio": float,
-"fcf_cagr_5y": float,
-"fcf_cagr_10y": float,
-"fcf_quality_score": float,
-"signal": str
+  "ticker": str,
+  "fcf": float,
+  "operating_cash_flow": float,
+  "capex": float,
+  "fcf_margin": float,
+  "fcf_conversion": float,
+  "fcf_stability": float,
+  "fcf_growth_consistency": float,
+  "accrual_ratio": float,
+  "fcf_cagr_5y": float,
+  "fcf_quality_score": float,
+  "signal": str
 }
 
-### Scoring
+Signal:
+- >=80 STRONG_CASH_GENERATOR
+- 65-79 HIGH_CASH_QUALITY
+- 45-64 NEUTRAL
+- 30-44 WEAK_CASH_QUALITY
+- <30 EARNINGS_QUALITY_RISK
 
-FCF Margin             0.25
+Weight:
+- 10%
 
-FCF Conversion         0.25
-
-FCF Stability          0.20
-
-FCF Growth Consistency 0.15
-
-Accrual Ratio          0.15
-
-Normalize to 0-100.
-
-### Signal
-
-> =80 STRONG_CASH_GENERATOR
-
-65-79 HIGH_CASH_QUALITY
-
-45-64 NEUTRAL
-
-30-44 WEAK_CASH_QUALITY
-
-<30 EARNINGS_QUALITY_RISK
-
-### Integration
-
-scores["fcf_quality"] = (
-FCFQualityAnalyzer(
-ticker,
-financials
-).get_fcf_quality_score()["fcf_quality_score"]
-)
-
-Composite Weight: 10%
-
-### Rules
-
-* Use historical data when available
-* Prefer 10Y history over shorter periods
-* Deterministic calculations only
-* No narrative output
-* No extra JSON keys
-* Production-grade financial calculations
-
-### Build Order
-
-1. Stub implementation
-2. Unit tests per metric
-3. Integration tests on liquid tickers
-
+Rules:
+- Deterministic only
+- No narrative output
+- No extra JSON keys
+- Finance-accurate calculations
 
 -----
 
