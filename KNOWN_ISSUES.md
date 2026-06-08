@@ -241,7 +241,7 @@ Acceptance Criteria:
 
 ## ISSUE-003
 
-Status: []
+Status: [closed]
 
 Title: touch is not working in mobile
 
