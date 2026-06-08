@@ -220,7 +220,7 @@ Acceptance Criteria:
 
 ## ISSUE-002
 
-Status: []
+Status: [closed]
 
 Title: Veirfy new coloring system
 
