@@ -372,6 +372,7 @@ Rules:
 - No narrative output
 - No extra JSON keys
 - Finance-accurate calculations
+- unit testing
 
 -----
 
