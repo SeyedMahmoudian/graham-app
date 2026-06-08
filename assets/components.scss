@@ -1,7 +1,7 @@
 // ── Graham App Component Styles ──────────────────────────────────────────────
 // All inline style dicts from app.py converted to semantic BEM classes
 // Organized by component section
-
+@use '_media' as media;
 @import 'style.scss';
 
 // ── Color Palette (mapped from app.py constants) ────────────────────────────
@@ -261,7 +261,13 @@ $muted:  #9e9e9e;
 .stat-item {
   // Stat layout from _stat helper
 }
-
+.badges{
+  display:flex;
+  flex-direction:column;
+  @include media.phones{
+    flex-direction:row;
+  }
+}
 .grade-badge {
   display: flex;
   flex-direction: column;

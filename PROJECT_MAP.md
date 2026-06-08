@@ -421,6 +421,15 @@ Priority: P4
 - make sec data download on demand, instead of downloading them all on fly we download only when we need to analyze. after the first fetch we rely on current cache system, in portfolio when we do simulation if sec data is out dated we do refetch 
 -----
 
+## P5 - Store buffet and grahm number in table
+
+- store the data so even after server reboot they are still there, 
+-----
+## P5 - stat label on mobile
+
+- in mobile stat labels should show if it is clicked on it
+-----
+
 ## P5 — Options Trading Intelligence Layer
 
 ### options_signal_engine.py
