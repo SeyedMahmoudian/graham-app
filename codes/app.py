@@ -1239,63 +1239,62 @@ def _build_analysis_content(data: dict) -> list:
                                 f"${price:.2f}" if price else "N/A",
                                 "Current market price per share."
                             ),
-                            _stat(
-                                "P/E",
-                                html.Span(
-                                    f"{g.get('pe', 0):.1f}×",
-                                    style={"color": _score_color(g.get("pe"), RULES["pe"])}
-                                ),
-                                "Price-to-Earnings ratio. Graham's ceiling: 15×. Lower = cheaper."
-                            ),
-                            _stat(
-                                "P/B",
-                                html.Span(
-                                    f"{g.get('pb', 0):.2f}×",
-                                    style={"color": _score_color(g.get("pb"), RULES["pb"])}
-                                ),
-                                "Price-to-Book ratio. Graham's ceiling: 1.5×. Lower = better value."
-                            ),
-                            _stat(
-                                "ROE",
-                                html.Span(
-                                    f"{q.get('roe', 0):.1f}%",
-                                    style={"color": _score_color(g.get("roe"), RULES["roe"])}
-                                ),
-                                "Return on Equity. Target: ≥15%."
-                            ),
-                            _stat(
-                                "Op Margin",
-                                html.Span(
-                                    f"{q.get('op_margin', 0):.1f}%",
-                                     style={"color": _score_color(q.get("op_margin"), RULES["op_margin"])}
-                                    
-                                ),
-                                "Operating Margin. Target: ≥15%."
-                            ),
-                            _stat(
-                                "Sharpe",
-                                html.Span(
-                                    f"{r_data.get('sharpe', 0):.2f}",
-                                    style={"color": _score_color(r_data.get('sharpe'), RULES["sharpe"])}
-                                ),
-                                "Sharpe Ratio. ≥1.0 = good, ≥1.5 = excellent."
-                            ),
-                            _stat(
-                                "Beta",
-                                html.Span(
-                                    f"{r_data.get('beta', 0):.2f}",
-                                    style={"color": _score_color(r_data.get('beta'), RULES["beta"])}
-                                ),
-                                "Beta vs SPY. <1.0 = defensive, >1.0 = more volatile."
-                            ),
-                            _stat(
-                                "F-Score",
-                                html.Span(
-                                    f"{p_data.get('f_score', 0)}/9",
-                                    style={"color": _score_color(p_data.get('f_score'), RULES["f_score"])}
-                                ),
-                                "Piotroski F-Score. 8–9 = strong."
-                            ),
+                           _stat(
+    "P/E",
+    html.Span(
+        f"{g.get('pe') or 0:.1f}×",
+        style={"color": _score_color(g.get("pe"), RULES["pe"])}
+    ),
+    "Price-to-Earnings ratio. Graham's ceiling: 15×. Lower = cheaper."
+),
+_stat(
+    "P/B",
+    html.Span(
+        f"{g.get('pb') or 0:.2f}×",
+        style={"color": _score_color(g.get("pb"), RULES["pb"])}
+    ),
+    "Price-to-Book ratio. Graham's ceiling: 1.5×. Lower = better value."
+),
+_stat(
+    "ROE",
+    html.Span(
+        f"{q.get('roe') or 0:.1f}%",
+        style={"color": _score_color(g.get("roe"), RULES["roe"])}
+    ),
+    "Return on Equity. Target: ≥15%."
+),
+_stat(
+    "Op Margin",
+    html.Span(
+        f"{q.get('op_margin') or 0:.1f}%",
+        style={"color": _score_color(q.get("op_margin"), RULES["op_margin"])}
+    ),
+    "Operating Margin. Target: ≥15%."
+),
+_stat(
+    "Sharpe",
+    html.Span(
+        f"{r_data.get('sharpe') or 0:.2f}",
+        style={"color": _score_color(r_data.get('sharpe'), RULES["sharpe"])}
+    ),
+    "Sharpe Ratio. ≥1.0 = good, ≥1.5 = excellent."
+),
+_stat(
+    "Beta",
+    html.Span(
+        f"{r_data.get('beta') or 0:.2f}",
+        style={"color": _score_color(r_data.get('beta'), RULES["beta"])}
+    ),
+    "Beta vs SPY. <1.0 = defensive, >1.0 = more volatile."
+),
+_stat(
+    "F-Score",
+    html.Span(
+        f"{p_data.get('f_score') or 0}/9",
+        style={"color": _score_color(p_data.get('f_score'), RULES["f_score"])}
+    ),
+    "Piotroski F-Score. 8–9 = strong."
+),
                             _stat(
                                 "Buffett IV",
                                 html.Span(
