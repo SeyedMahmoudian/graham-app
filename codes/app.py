@@ -1100,40 +1100,42 @@ def _risk_card(data: dict) -> html.Div:
         return html.Div()
     def _fv(val, decimals=2, suffix=""):
         return f"{val:.{decimals}f}{suffix}" if val is not None else "N/A"
-    def _mc(val, good_above=None, bad_below=None):
+    def _mc(val, good_above=None, bad_below=None, good_below=None, bad_above=None):
         if val is None:
             return MUTED
         if good_above is not None and val >= good_above:
             return GREEN
+        if good_below is not None and val <= good_below:
+            return GREEN
+        if bad_above is not None and val >= bad_above:
+            return RED
         if bad_below is not None and val <= bad_below:
             return RED
         return AMBER
     metrics = [
-        ("Sharpe Ratio(Good above 1)",       _fv(r.get("sharpe")),
+        ("Sharpe Ratio (≥1.0 good)",       _fv(r.get("sharpe")),
          _mc(r.get("sharpe"), good_above=1.0, bad_below=0)),
-        ("Sortino Ratio(good_above=1.5)",      _fv(r.get("sortino")),
+        ("Sortino Ratio (≥1.5 good)",      _fv(r.get("sortino")),
          _mc(r.get("sortino"), good_above=1.5, bad_below=0)),
-        ("Beta (vs SPY bad_below=1.5)",      _fv(r.get("beta")),
-         _mc(r.get("beta"), bad_below=1.5)),
-        ("Alpha (good_above=0)",       _fv(r.get("alpha"), 1, "%"),
+        ("Beta vs SPY (<1.0 defensive)",   _fv(r.get("beta")),
+         _mc(r.get("beta"), good_below=1.0, bad_above=1.5)),
+        ("Alpha (>0 outperforms)",         _fv(r.get("alpha"), 1, "%"),
          _mc(r.get("alpha"), good_above=0, bad_below=-5)),
-        ("Max Drawdown(bad_below=-30)",       _fv(r.get("max_drawdown"), 1, "%"),
+        ("Max Drawdown (>-30% ok)",        _fv(r.get("max_drawdown"), 1, "%"),
          _mc(r.get("max_drawdown"), bad_below=-30)),
-        ("Ann. Volatility(bad_below=40)",    _fv(r.get("volatility_annual"), 1, "%"),
-         _mc(r.get("volatility_annual"), bad_below=40)),
+        ("Ann. Volatility (<25% ok)",      _fv(r.get("volatility_annual"), 1, "%"),
+         _mc(r.get("volatility_annual"), good_below=25, bad_above=40)),
         ("VaR 95% (monthly)",  _fv(r.get("var_95"), 1, "%"), MUTED),
         ("CVaR 95% (monthly)", _fv(r.get("cvar_95"), 1, "%"), MUTED),
-        ("Ann. Return(good_above=10,bad_below=0)",        _fv(r.get("annual_return"), 1, "%"),
+        ("Ann. Return (≥10% good)",        _fv(r.get("annual_return"), 1, "%"),
          _mc(r.get("annual_return"), good_above=10, bad_below=0)),
-        ("Calmar Ratio(good_above=1.0,bad_below=0)",       _fv(r.get("calmar")),
+        ("Calmar Ratio (≥1.0 good)",       _fv(r.get("calmar")),
          _mc(r.get("calmar"), good_above=1.0, bad_below=0)),
     ]
     metric_cells = [
-        html.Div(style={
-          
-        }, children=[
-            html.P(lbl),
-            html.P(val),
+        html.Div(style={}, children=[
+            html.P(lbl, style={"color": MUTED, "fontSize": "12px", "margin": "0"}),
+            html.P(val, style={"color": col, "fontWeight": "600", "margin": "0"}),
         ])
         for lbl, val, col in metrics
     ]
@@ -1259,7 +1261,7 @@ _stat(
     "ROE",
     html.Span(
         f"{q.get('roe') or 0:.1f}%",
-        style={"color": _score_color(g.get("roe"), RULES["roe"])}
+        style={"color": _score_color(q.get("roe"), RULES["roe"])}
     ),
     "Return on Equity. Target: ≥15%."
 ),
