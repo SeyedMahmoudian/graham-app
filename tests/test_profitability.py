@@ -8,7 +8,22 @@ Covers:
   - Signal mapping thresholds
   - Output JSON shape (strict keys, types)
   - Integration: scorer.enhanced_composite accepts profitability_result
+
+Run via pytest (preferred):
+    pytest tests/test_profitability.py
+
+Or directly:
+    python3 tests/test_profitability.py
 """
+
+import sys
+import os
+
+# Ensure project root is on sys.path when run directly with python3.
+# pytest handles this via tests/conftest.py; this block covers direct execution.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 import math
 import pytest
@@ -444,3 +459,7 @@ class TestScorerIntegration:
         from codes.engine.scorer import ENHANCED_WEIGHTS
         total = sum(ENHANCED_WEIGHTS.values())
         assert abs(total - 1.0) < 1e-9, f"Weights sum to {total}, not 1.0"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
