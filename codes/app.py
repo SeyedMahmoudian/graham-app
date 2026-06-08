@@ -76,9 +76,9 @@ app.index_string = app.index_string.replace(
     '</script></head>'
 )
 # ── Color Theme (CSS vars in style.css, keeping for reference) ────────────────
-DARK, CARD, BORDER, GREEN, RED, AMBER, BLUE, TEXT, MUTED = (
+DARK, CARD, BORDER, GREEN, RED, AMBER, BLUE, TEXT, MUTED ,WHITE= (
     "#0f1117", "#1a1d27", "#2a2d3e", "#00c853", "#ff1744",
-    "#ffc107", "#448aff", "#e0e0e0", "#9e9e9e"
+    "#ffc107", "#448aff", "#e0e0e0", "#9e9e9e", "#ffffff"
 )
 # ── Performance Optimization: Module-level caches ─────────────────────────────
 _spy_history = None
@@ -1530,7 +1530,17 @@ def _pillar(label, score, weight):
 
 def _grade_color(grade: str) -> str:
     return {"A": GREEN, "B": BLUE, "C": AMBER, "D": RED}.get(grade, MUTED)
-
+def format_currency(val) -> str:
+    if val is None:
+        return "N/A"
+    elif val >= 1e9:
+        return f"${val/1e9:.2f}B"
+    elif val >= 1e6:
+        return f"${val/1e6:.2f}M"
+    elif val >= 1e3:
+        return f"${val/1e3:.2f}K"
+    else:
+        return f"${val:.2f}"
 def _verdict_color(label: str) -> str:
     return {
         "strong-buy": GREEN,
@@ -1577,8 +1587,9 @@ def _eps_chart(eps_history: list, symbol: str) -> html.Div:
     fig = go.Figure(go.Bar(
         x=df["year"].astype(str), y=df["value"],
         marker_color=colors,
-        text=[f"${v:.2f}" for v in df["value"]],
-        textposition="outside"
+        text=[format_currency(v) for v in df["value"]],
+        textposition="outside",
+        textfont=dict(size=12, color=WHITE) 
     ))
     fig.update_layout(**_chart_layout(f"{symbol} EPS History (10yr)"))
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
@@ -1638,8 +1649,9 @@ def _div_chart(div_history: list, symbol: str) -> html.Div:
         x=df["year"].astype(str),
         y=df["value"] / 1e6,
         marker_color=BLUE,
-        text=[f"${v/1e6:,.0f}M" for v in df["value"]],
-        textposition="outside"
+        text=[format_currency(v) for v in df["value"]],
+        textposition="outside",
+        textfont=dict(size=20, color=WHITE) 
     ))
     fig.update_layout(**_chart_layout(f"{symbol} Dividend Payments (USD Millions)"))
     return dcc.Graph(figure=fig, config={"displayModeBar": False})
