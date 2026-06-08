@@ -2317,14 +2317,15 @@ def run_simulation(n, active, compare):
 app.clientside_callback(
     """
     function(_) {
+        // target.click() creates a trusted event (isTrusted=true); React ignores
+        // untrusted events from dispatchEvent(new MouseEvent()), which is why the
+        // previous version silently failed on mobile.
         document.addEventListener('touchend', function(e) {
             var target = e.target;
             while (target && target !== document.body) {
                 if (target.classList && target.classList.contains('ticker-link-btn')) {
-                    e.preventDefault();
-                    target.dispatchEvent(new MouseEvent('click', {
-                        bubbles: true, cancelable: true, view: window
-                    }));
+                    e.preventDefault();  // stop browser double-firing its own click
+                    target.click();      // trusted — React increments n_clicks
                     return;
                 }
                 target = target.parentElement;
