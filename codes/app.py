@@ -2317,20 +2317,45 @@ def run_simulation(n, active, compare):
 app.clientside_callback(
     """
     function(_) {
-        // target.click() creates a trusted event (isTrusted=true); React ignores
-        // untrusted events from dispatchEvent(new MouseEvent()), which is why the
-        // previous version silently failed on mobile.
+        // ISSUE-003 root cause: the screener interval re-renders the table every 2s.
+        // If a re-render fires between touchstart and touchend, e.target in touchend
+        // points to a detached DOM node — click() on detached nodes is a no-op.
+        //
+        // Fix: record the ticker *text* on touchstart (before any re-render), then
+        // on touchend query the LIVE .ticker-link-btn with that text and click it.
+        var _pendingTicker = null;
+        var _touchStartY   = 0;
+
+        document.addEventListener('touchstart', function(e) {
+            _pendingTicker = null;
+            var t = e.target;
+            while (t && t !== document.body) {
+                if (t.classList && t.classList.contains('ticker-link-btn')) {
+                    _pendingTicker = t.textContent.trim();
+                    _touchStartY   = e.touches[0].clientY;
+                    break;
+                }
+                t = t.parentElement;
+            }
+        }, { passive: true });
+
         document.addEventListener('touchend', function(e) {
-            var target = e.target;
-            while (target && target !== document.body) {
-                if (target.classList && target.classList.contains('ticker-link-btn')) {
-                    e.preventDefault();  // stop browser double-firing its own click
-                    target.click();      // trusted — React increments n_clicks
+            if (!_pendingTicker) return;
+            var ticker = _pendingTicker;
+            _pendingTicker = null;
+            // Ignore if finger moved > 10px (scroll gesture, not tap)
+            if (Math.abs(e.changedTouches[0].clientY - _touchStartY) >= 10) return;
+            e.preventDefault();
+            // Find the live button — survives re-renders between touchstart and touchend
+            var buttons = document.querySelectorAll('.ticker-link-btn');
+            for (var i = 0; i < buttons.length; i++) {
+                if (buttons[i].textContent.trim() === ticker) {
+                    buttons[i].click();
                     return;
                 }
-                target = target.parentElement;
             }
         }, { passive: false });
+
         return window.dash_clientside.no_update;
     }
     """,
