@@ -4,9 +4,9 @@ PROJECT: Fundamental Stock Analysis + Portfolio Intelligence System
 GOAL:
 Multi-factor equity scoring engine combining value, quality, momentum, risk, and forward-looking alpha signals with efficient SEC data ingestion and persistent metric storage.
 
-========================================================
+==========================================
 CORE ARCHITECTURE RULES (HARD CONSTRAINTS)
-========================================================
+==========================================
 - Preserve all existing public APIs
 - No repo-wide refactors
 - Minimal diffs only
