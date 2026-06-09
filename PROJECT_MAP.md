@@ -1,570 +1,216 @@
-# PROJECT_MAP.md
 
-## Project Purpose
-
-Fundamental stock analysis and portfolio analytics platform.
-
-The repository evaluates companies using multiple value-investing frameworks and portfolio risk models.
-
------
-
-# Directory Ownership
-
-## Data Acquisition Layer
-
-### sec_data.py
-
-Responsibilities:
-
-- SEC/market data retrieval
-- Financial statement collection
-- Dividend history retrieval
-- Historical company fundamentals
-
-Key outputs:
-
-- Financial statements
-- Dividend records
-- Company metrics
-
-Dependencies:
-
-- Used by scoring models
-- Used by portfolio analytics
-
------
-
-## Value Investing Models
-
-### graham.py
-
-Responsibilities:
-
-- Benjamin Graham screening
-- Earnings stability
-- Dividend history analysis
-- Financial strength checks
-
-Key metrics:
-
-- Consecutive dividend years
-- Earnings consistency
-- Graham score
-
-Dependencies:
-
-- sec_data.py
-
------
-
-### piotroski.py
-
-Responsibilities:
-
-- Piotroski F-Score calculation
-
-Key metrics:
-
-- Profitability
-- Leverage
-- Liquidity
-- Operating efficiency
-
-Dependencies:
-
-- Financial statements
-- Historical fiscal periods
-
------
-
-### altman.py
-
-Responsibilities:
-
-- Altman Z-Score
-
-Key metrics:
-
-- Working capital ratio
-- Retained earnings ratio
-- EBIT ratio
-- Market value ratio
-- Asset turnover ratio
-
-Dependencies:
-
-- Balance sheet
-- Income statement
-- Market capitalization
-
------
-
-### greenblatt.py
-
-Responsibilities:
-
-- Magic Formula ranking
-
-Key metrics:
-
-- Earnings Yield
-- Return on Capital
-- Net Working Capital
-
-Dependencies:
-
-- Financial statements
-- Enterprise value calculations
-
------
-### earnings_revision.py
-
-Responsibilities:
-- EPS revision tracking
-- Revenue estimate revision tracking
-- Earnings surprise aggregation
-- Analyst revision momentum signal
-
-Key metrics:
-- EPS revision (30d / 90d)
-- Revenue revision (30d)
-- Earnings surprise average
-- Revision breadth
-
-Dependencies:
-- External analyst data API (FMP / Polygon)
-- sec_data.py (shared API client)
------
-### profitability.py
-
-Responsibilities:
-
-* Business profitability analysis
-* Capital efficiency evaluation
-* Return-on-capital measurement
-* Margin quality assessment
-* Incremental return analysis
-* Business quality classification
-
-Goal:
-
-Identify companies that consistently convert capital into profits at superior rates while maintaining durable margins and efficient reinvestment.
-
-Key metrics:
-
-* ROIC
-* Adjusted ROE
-* ROA
-* Gross Profitability
-* Operating Margin Stability
-* Capital Efficiency
-* Incremental ROIC
-
-Output:
-
-* Profitability score (0-100)
-* Quality signal
-
-Signal classes:
-
-* STRONG_HIGH_QUALITY
-* HIGH_QUALITY
-* NEUTRAL
-* LOW_QUALITY
-* VALUE_TRAP_RISK
-
-Dependencies:
-
-* sec_data.py
-* Income Statement
-* Balance Sheet
-* Historical fiscal periods
-
-Used by:
-
-* scorer.py
-
-Composite weight:
-
-* 12%
-
-Purpose:
-
-Separates truly efficient businesses from companies that appear attractive based solely on earnings growth. The model emphasizes capital allocation efficiency, profitability durability, and reinvestment quality.
-
-## Composite Scoring
-
-### scorer.py
-
-Responsibilities:
-
-- Aggregates individual model outputs
-- Produces composite ranking scores
-- Weighting and normalization
-
-Dependencies:
-
-- graham.py
-- piotroski.py
-- altman.py
-- greenblatt.py
-
------
-
-### app.py
-
-Responsibilities:
-
-- User-facing score presentation
-- Dashboard output
-- Ranking display
-- Final composite score display
-
-Dependencies:
-
-- scorer.py
-
------
-
-## Portfolio Analytics
-
-### portfolio.py
-
-Responsibilities:
-
-- Portfolio simulation
-- Monte Carlo projections
-- Portfolio volatility
-- Portfolio return estimation
-
-Key concepts:
-
-- Covariance matrix
-- Correlation adjustments
-- Geometric return assumptions
-
-Dependencies:
-
-- Historical return series
-
------
-
-### risk_metrics.py
-
-Responsibilities:
-
-- Risk calculations
-
-Metrics:
-
-- Sharpe Ratio
-- Sortino Ratio
-- Maximum Drawdown
-- Volatility
-
-Dependencies:
-
-- Historical return series
-
------
-
-# Current Audit Priorities
-
-1. Dividend history lookback
-1. Consecutive dividend year logic
-1. Covariance-based portfolio volatility
-1. Geometric Monte Carlo drift
-1. Proper YoY Piotroski comparisons
-1. Partial Altman scaling
-1. Greenblatt NWC cash exclusion
-1. Composite score EY decision
-1. Sortino denominator correction
-
------
-
-# Rules For AI Agents
-
-When working on a task:
-
-1. Read only relevant files.
-1. Avoid repository-wide scans.
-1. Avoid unrelated refactors.
-1. Preserve public APIs.
-1. Add tests for all changes.
-1. Produce minimal diffs.
-1. Stop after completing requested scope.
-
------
-
-# Future Model Improvements
-
-The following enhancements are candidates for future development after current audit priorities are complete.
-
-Priority definitions:
-
-- P1 = Highest expected impact on stock selection performance
-- P2 = High impact and strong complementary factor
-- P3 = Moderate impact / portfolio enhancement
-- P4 = Advanced optimization
-
------
-## P1 — Free Cash Flow Quality Model
-
-### fcf_quality.py
-
-Implement FCFQualityAnalyzer.
-
-Goal:
-- Measure earnings quality using 10Y cash-flow history.
-- Use all available fiscal years (up to 10Y).
-
-Metrics:
-- FCF Margin (25%)
-- FCF Conversion (25%)
-- FCF Stability (20%)
-- FCF Growth Consistency (15%)
-- Accrual Ratio (15%)
-
-Additional Outputs:
-- FCF
-- OCF
-- CapEx
-- FCF CAGR 5Y
-
-Methods:
-- calc_fcf
-- calc_fcf_margin
-- calc_fcf_conversion
-- calc_fcf_stability
-- calc_fcf_growth_consistency
-- calc_accrual_ratio
-- get_fcf_quality_score
-
-Output JSON:
-
-{
-  "ticker": str,
-  "fcf": float,
-  "operating_cash_flow": float,
-  "capex": float,
-  "fcf_margin": float,
-  "fcf_conversion": float,
-  "fcf_stability": float,
-  "fcf_growth_consistency": float,
-  "accrual_ratio": float,
-  "fcf_cagr_5y": float,
-  "fcf_quality_score": float,
-  "signal": str
-}
-
-Signal:
-- >=80 STRONG_CASH_GENERATOR
-- 65-79 HIGH_CASH_QUALITY
-- 45-64 NEUTRAL
-- 30-44 WEAK_CASH_QUALITY
-- <30 EARNINGS_QUALITY_RISK
-
-Weight:
-- 10%
-
-Rules:
-- Deterministic only
-- No narrative output
-- No extra JSON keys
-- Finance-accurate calculations
-- unit testing
-
------
-
-## P2 — Capital Allocation Model
-
-### capital_allocation.py
-
-Priority: P2
-
-Expected Impact: High
-weight 8%
-
------
-
-## P2 — Growth Quality Model
-
-### growth_quality.py
-
-Priority: P2
-
-Expected Impact: High
-weight 8%
-
------
-
-## P3 — Market Regime Model
-
-### regime.py
-
-Priority: P3
-
-Expected Impact: Moderate to High
-
------
-
-## P4 — Advanced Research Modules
-
-### insider_activity.py
-
-### factor_momentum.py
-
-### alternative_data.py
-
-Priority: P4
------
-## P5 - On demand SEC data fetch
-
-- make sec data download on demand, instead of downloading them all on fly we download only when we need to analyze. after the first fetch we rely on current cache system, in portfolio when we do simulation if sec data is out dated we do refetch 
------
-
-## P5 - Store buffet and grahm number in table
-
-- store the data so even after server reboot they are still there, 
------
-## P5 - stat label on mobile
-
-- in mobile stat labels should show if it is clicked on it
------
-
-## P5 — Options Trading Intelligence Layer
-
-### options_signal_engine.py
-
-Priority: P4
-
-Expected Impact: High (tactical alpha / derivatives layer)
-
-### Responsibilities:
-
-- CALL vs PUT directional prediction
-- Short-term option price movement modeling (not expiry outcome)
-- Strike + expiry optimization
+PROJECT: Fundamental Stock Analysis + Portfolio Intelligence System
+
+GOAL:
+Multi-factor equity scoring engine combining value, quality, momentum, risk, and forward-looking alpha signals with efficient SEC data ingestion and persistent metric storage.
+
+========================================================
+CORE ARCHITECTURE RULES (HARD CONSTRAINTS)
+========================================================
+- Preserve all existing public APIs
+- No repo-wide refactors
+- Minimal diffs only
+- Add tests for every new module
+- sec_data.py is single source of financial truth
+- All new models are plug-in modules
+- scorer.py remains stable unless explicitly extended
+- Deterministic outputs required
+- Avoid cross-module entanglement unless defined
+
+
+========================================================
+DATA LAYER
+========================================================
+sec_data.py:
+- SEC + fundamentals ingestion
+- Dividend + financial history provider
+
+P5 UPGRADE:
+- Convert to lazy fetch + caching
+- Add:
+  get_financials(ticker, force_refresh=False)
+  is_cache_stale(ticker)
+  refresh_if_needed(ticker)
+- TTL:
+  annual=7d, quarterly=1–3d
+- Cache-first behavior; fetch only when needed
+
+========================================================
+CORE VALUE MODELS
+========================================================
+graham.py:
+- dividend stability, earnings consistency, value score
+
+greenblatt.py:
+- earnings yield + ROC + NWC
+
+piotroski.py:
+- F-score (profitability, leverage, efficiency)
+
+altman.py:
+- bankruptcy risk (Z-score)
+
+earnings_revision.py:
+- EPS/revenue revision momentum + surprises
+
+fcf_quality.py:
+- 10Y cash flow quality (margin, conversion, stability, accruals)
+
+profitability.py (weight 12%):
+- ROIC, ROE, margins, capital efficiency, incremental ROIC
+
+========================================================
+NEW P2–P3–P4 MODELS
+========================================================
+
+P2 CAPITAL ALLOCATION (capital_allocation.py, weight 8%):
+- reinvestment rate
+- ROIC spread
+- buyback yield
+- dilution rate
+- dividend stability
+- debt allocation trend
+- M&A efficiency
+=> capital_allocation_score + signal
+
+P2 GROWTH QUALITY (growth_quality.py, weight 8%):
+- revenue CAGR (5Y/10Y)
+- EPS CAGR
+- FCF CAGR
+- margin stability
+- incremental ROIC
+=> growth_quality_score + signal
+
+P3 REGIME MODEL (regime.py):
+- market trend score
+- volatility percentile (20D/60D)
+- drawdown depth
+=> regimes:
+BULL_LOW_VOL | BULL_HIGH_VOL | BEAR_LOW_VOL | BEAR_HIGH_VOL | SIDEWAYS
+
+P4 INSIDER ACTIVITY:
+- net insider buying
+- cluster buying detection
+- insider confidence score
+
+P4 FACTOR MOMENTUM:
+- 3M/6M/12M returns
+- earnings momentum
+- ROIC trend slope
+
+P4 ALTERNATIVE DATA (framework only):
+- web traffic (stub)
+- hiring velocity (stub)
+- sentiment (stub)
+
+========================================================
+OPTIONS LAYER (P4 EXPANSION)
+========================================================
+options_signal_engine.py:
+- CALL vs PUT directional bias
+- short-horizon option price movement prediction
 - IV regime + volatility expansion detection
-- Options flow anomaly detection
-- Risk-adjusted edge scoring for derivatives trades
+- strike/expiry recommendation
+- risk score (theta + liquidity + IV)
+- edge score
 
-### Key Outputs:
+NOTE:
+Models option mark-to-market movement, NOT expiry payoff
 
-- Directional bias (CALL / PUT)
-- Probability option price increases (P_up)
-- Expected short-horizon return
-- Recommended strike / expiry pair
-- Risk score (theta + IV + liquidity)
-- Edge score (alpha strength)
+Dependencies:
+sec_data.py, regime.py, risk_metrics.py, portfolio.py
 
-### Core Design Principle:
+========================================================
+P5 INFRASTRUCTURE UPGRADES
+========================================================
 
-> Models option mark-to-market movement, not expiration payoff
+1. SEC LAZY FETCH (critical):
+- eliminate bulk ingestion
+- fetch on demand + cache reuse
+- auto-refresh if stale in portfolio simulation
 
-### Dependencies:
+2. PERSISTENCE STORE:
+value_metrics SQLite table:
+- ticker (PK)
+- graham_score
+- buffett_score
+- updated_at
+=> survives restarts, used for fast retrieval
 
-- sec_data.py
-- regime.py
-- risk_metrics.py
-- portfolio.py
+3. MOBILE UX:
+- stat labels expandable on tap
+- single active expanded stat
+- requires (label, value, description)
 
------
+========================================================
+SCORER SYSTEM (UNCHANGED CORE LOGIC)
+========================================================
+Current weights (legacy):
+- Graham 15%
+- Buffett 25%
+- Quality 18%
+- Momentum 14%
+- Piotroski 14%
+- Risk 8%
+- Altman 6%
 
-# Recommended Development Order
+PROPOSED ORTHOGONAL SYSTEM:
 
+Value: 12%
+Quality: 18%
+Momentum: 12%
+Profitability: 12%
+FCF Quality: 10%
+Earnings Revisions: 12%
+Capital Allocation: 8%
+Growth Quality: 7%
+Risk: 6%
+Altman: 3%
+
+TOTAL = 100%
+
+KEY DESIGN SHIFT:
+- Reduce overlap (Buffett/Piotroski/Altman redundancy removed)
+- Increase forward-looking signals (earnings revisions, growth)
+- Improve factor independence (orthogonal decomposition)
+
+========================================================
+EXECUTION PRIORITY ORDER
+========================================================
 1. profitability.py
-1. fcf_quality.py
-1. earnings_revision.py
-1. capital_allocation.py
-1. growth_quality.py
-1. regime.py
-1. insider_activity.py
-1. factor_momentum.py
-1. alternative_data.py
-1. options_signal_engine.py
+2. fcf_quality.py
+3. earnings_revision.py
+4. capital_allocation.py
+5. growth_quality.py
+6. regime.py
+7. insider_activity.py
+8. factor_momentum.py
+9. alternative_data.py
+10. options_signal_engine.py
+11. sec_data lazy upgrade
+12. persistence layer
+13. mobile UX
 
------
+========================================================
+GLOBAL AI AGENT RULES
+========================================================
+- Read only relevant files
+- Avoid repo-wide scans
+- No unrelated refactors
+- Preserve APIs strictly
+- Add tests for every change
+- Minimal diff output
+- Stop after scoped task completion
 
-# READJUSTED COMPOSITE WEIGHTING (PROPOSED)
+========================================================
+EXPECTED SYSTEM OUTCOME
+========================================================
+- Higher Sharpe ratio via orthogonal factors
+- Reduced value traps via revisions + growth filters
+- Better regime-aware risk control
+- Improved capital efficiency detection
+- Faster SEC access via lazy ingestion
+- Persistent computed value signals
+- Mobile-friendly interpretability layer
 
-After adding the new modules, the scoring system should evolve from overlapping legacy factors into a more orthogonal structure.
-
-## Current Model
-
-- Graham — 15%
-- Buffett — 25%
-- Quality — 18%
-- Momentum — 14%
-- Piotroski — 14%
-- Risk — 8%
-- Altman — 6%
-
-Total: 100%
-
------
-
-## Proposed Adjusted Model
-
-To reduce overlap and improve signal independence:
-
-### Core Factors
-
-- Value (Graham + Greenblatt) — 12%
-- Quality (Buffett + Piotroski partial overlap reduced) — 18%
-- Momentum — 12%
-- Risk — 6%
-
-### New Alpha Factors
-
-- Profitability (ROIC-based) — 12%
-- Free Cash Flow Quality — 10%
-- Earnings Revisions — 12%
-- Capital Allocation — 8%
-- Growth Quality — 7%
-
-### Stability / Safety Layer
-
-- Altman Z-Score — 3%
-
------
-
-## Final Adjusted Allocation
-
-|Factor            |Weight|
-|------------------|------|
-|Value             |12%   |
-|Quality           |18%   |
-|Momentum          |12%   |
-|Profitability     |12%   |
-|FCF Quality       |10%   |
-|Earnings Revisions|12%   |
-|Capital Allocation|8%    |
-|Growth Quality    |7%    |
-|Risk              |6%    |
-|Altman Z          |3%    |
-
-**Total: 100%**
-
------
-
-## Key Structural Change
-
-This new weighting improves the model by:
-
-- Reducing redundancy between Graham / Buffett / Piotroski / Altman
-- Increasing exposure to forward-looking signals (earnings revisions)
-- Introducing cash-flow based validation (FCF quality)
-- Separating profitability from generic “quality”
-- Making the system more orthogonal and less correlated
-
------
-
-## Expected Impact
-
-If implemented with clean data pipelines and proper backtesting:
-
-- Higher Sharpe ratio potential
-- Reduced drawdowns in value traps
-- Better cyclical adaptability
-- Improved SPY-relative consistency
+END
