@@ -383,6 +383,7 @@ Rules:
 Priority: P2
 
 Expected Impact: High
+weight 8%
 
 -----
 
@@ -393,6 +394,7 @@ Expected Impact: High
 Priority: P2
 
 Expected Impact: High
+weight 8%
 
 -----
 
