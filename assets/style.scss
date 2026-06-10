@@ -112,56 +112,64 @@ body {
   background-size: 32px 32px;
 }
 
-// ── App Shell ────────────────────────────────────────────────────────────────
-.app-container {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0 20px 60px;
-}
+.app {
 
-// ── Header ───────────────────────────────────────────────────────────────────
-.app-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 0 20px;
-  border-bottom: 1px solid $border;
-  margin-bottom: 0;
-  position: relative;
-
-  &::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    width: 120px;
-    height: 2px;
-    background: linear-gradient(90deg, $blue-bright, transparent);
+  // ── App Shell ────────────────────────────────────────────────────────────────
+  &-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 20px 60px;
   }
 
-  .app-header-icon {
-    font-size: 28px;
-    line-height: 1;
-    filter: drop-shadow(0 0 8px rgba(68, 138, 255, 0.6));
-  }
+  // ── Header ───────────────────────────────────────────────────────────────────
 
-  .app-header-content {
-    h1 {
-      font-family: $font-display;
-      font-size: 22px;
-      font-weight: 800;
-      color: $text;
-      letter-spacing: -0.02em;
-      line-height: 1.1;
+  &-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px 0 20px;
+    border-bottom: 1px solid $border;
+    margin-bottom: 0;
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      width: 120px;
+      height: 2px;
+      background: linear-gradient(90deg, $blue-bright, transparent);
     }
 
-    p {
-      @include label-caps;
-      margin-top: 3px;
-      color: $blue-bright;
+    &-icon {
+      font-size: 28px;
+      line-height: 1;
+      filter: drop-shadow(0 0 8px rgba(68, 138, 255, 0.6));
     }
+
+    &-content {
+      h1 {
+        font-family: $font-display;
+        font-size: 22px;
+        font-weight: 800;
+        color: $text;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+      }
+
+      p {
+        @include label-caps;
+        margin-top: 3px;
+        color: $blue-bright;
+      }
+    }
+
   }
 }
+
+
+
 
 // ── Tab Bar ──────────────────────────────────────────────────────────────────
 .tab-bar {
@@ -236,9 +244,10 @@ body {
   overflow: hidden;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+
   @include media.phones {
     white-space: break-spaces;
-    
+
   }
 
   &::before {
@@ -751,6 +760,7 @@ body {
 // ── Composite Banner ──────────────────────────────────────────────────────────
 .composite-banner {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 24px;
@@ -759,29 +769,32 @@ body {
   border-left: 3px solid $amber;
   margin-bottom: 16px;
   background: linear-gradient(135deg, $card 0%, rgba($amber, 0.04) 100%);
+
+  &-verdict {
+    font-family: $font-display;
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  &-desc {
+    @include mono(12px);
+    color: $text-dim;
+    max-width: 380px;
+  }
+
 }
 
-.composite-banner-verdict {
-  font-family: $font-display;
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  line-height: 1;
-  margin-bottom: 6px;
-}
-
-.composite-banner-desc {
-  @include mono(12px);
-  color: $text-dim;
-  max-width: 380px;
-}
 
 .pillar-scores {
   display: flex;
   gap: 0;
   border: 1px solid $border;
   border-radius: 4px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   flex-shrink: 0;
 
   >div {
@@ -789,6 +802,7 @@ body {
     text-align: center;
     border-right: 1px solid $border;
     min-width: 80px;
+    flex: 0 0 auto;
 
     &:last-child {
       border-right: none;
@@ -1122,11 +1136,12 @@ body {
 }
 
 #tab-analyze {
-  #analysis-content{
+  #analysis-content {
     @include media.phones {
-     width: 100%;
+      width: 100%;
     }
   }
+
   .infolayer {
     .scrollbox {
       position: absolute;
@@ -1164,7 +1179,7 @@ body {
     flex: 1 1 50%;
 
     p {
-    width: 100%;
+      width: 100%;
     }
 
     div {

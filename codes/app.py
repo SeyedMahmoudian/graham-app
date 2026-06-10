@@ -1323,9 +1323,7 @@ def _risk_card(data: dict) -> html.Div:
         for lbl, val, col in metrics
     ]
     risk_criteria = r.get("risk_criteria") or []
-    return html.Div(children=[
-      
-        html.Div(className="risk-row",children=[
+    return html.Div(className="risk-row",children=[
             
             html.Div( className="metric_cell scorecard",children=[
                     html.P(
@@ -1333,9 +1331,9 @@ def _risk_card(data: dict) -> html.Div:
                 ),
                 *metric_cells
             ]),_render_scorecard("Risk Score Breakdown", risk_criteria, "risk")
-                        ]),
+        ])
         
-    ])
+    
 def _regime_card(data: dict) -> html.Div:
     """Regime model card: market condition + portfolio risk overlay."""
     r = data.get("regime") or {}
@@ -1706,7 +1704,7 @@ _stat(
     fcf_quality_card = _fcf_quality_card(data)
     capital_allocation_card = _capital_allocation_card(data)
     regime_card = _regime_card(data)
-   
+    row=(html.Div(className="card-row", children=[fcf_quality_card, regime_card]))
     charts_row = html.Div(
         className="charts-grid",
         children=[
@@ -1724,8 +1722,7 @@ _stat(
         moment_quality_row,
         quant_row,
         risk_card,
-        regime_card,
-        fcf_quality_card,
+        row,
         capital_allocation_card,
         charts_row,
         div_chart,
