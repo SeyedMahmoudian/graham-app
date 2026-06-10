@@ -141,6 +141,9 @@ value_metrics SQLite table:
 - single active expanded stat
 - requires (label, value, description)
 
+4. Portfolio
+- search through all the existing anazlyzed stock to see which one is a better replacement for the weak link, if none use spy
+
 SCORER SYSTEM (UNCHANGED CORE LOGIC)
 ===
 Current weights (legacy):
