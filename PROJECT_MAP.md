@@ -106,9 +106,10 @@ P5 INFRASTRUCTURE UPGRADES
 2. PERSISTENCE STORE:
 value_metrics SQLite table:
 - ticker (PK)
-- graham_score
-- buffett_score
+- graham_score <-- replace with market cap, want to be able to order the table by market cap
+- quality <-- remove this
 - updated_at
+- keep GN Price and Buffet IV
 => survives restarts, used for fast retrieval
 
 3. MOBILE UX:

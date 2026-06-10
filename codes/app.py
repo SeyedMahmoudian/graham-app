@@ -2614,9 +2614,7 @@ app.clientside_callback(
 # ── Startup ───────────────────────────────────────────────────────────────────
 def startup():
     print("\n🚀 Graham Score — Quant Edition")
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)")
-    print("SEC EDGAR (free) + Alpha Vantage (free)\n")
+   
     sec_data.get_ticker_map()
     universe.get_universe()
     results = screener.load_cached_only()
