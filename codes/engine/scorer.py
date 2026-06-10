@@ -118,16 +118,17 @@ def fundamental_only(graham_result: dict, quality_result: dict) -> dict:
 # Altman also acts as a HARD CAP: distress zone stocks cannot exceed 50/100.
 
 ENHANCED_WEIGHTS = {
-    "graham":             0.11,   # reduced to accommodate profitability slot
-    "buffett":            0.10,   # reduced to accommodate fcf_quality slot
-    "quality":            0.14,   # reduced to accommodate profitability slot
-    "momentum":           0.11,   # reduced to accommodate profitability slot
-    "piotroski":          0.11,   # reduced to accommodate profitability slot
-    "risk":               0.06,   # reduced to accommodate profitability slot
-    "altman":             0.03,   # reduced to accommodate profitability slot
+    "graham":             0.12,   # value anchor
+    "buffett":            0.06,   # DCF IV signal
+    "quality":            0.10,   # business quality (ROE, margins, FCF, rev growth)
+    "momentum":           0.12,   # price trend confirmation
+    "piotroski":          0.09,   # accounting health / value-trap filter
+    "risk":               0.06,   # risk-adjusted profile
+    "altman":             0.03,   # bankruptcy safety cap
     "earnings_revision":  0.12,   # P1 forward momentum factor
-    "profitability":      0.12,   # P1 structural quality factor (ROIC-based)
-    "fcf_quality":        0.10,   # P1 cash generation quality factor
+    "profitability":      0.12,   # P1 structural quality (ROIC-based)
+    "fcf_quality":        0.10,   # P1 cash generation quality
+    "capital_allocation": 0.08,   # P2 capital allocation efficiency
     # Sum = 1.00
 }
 
@@ -175,13 +176,14 @@ def enhanced_composite(
     risk_result:      dict,
     altman_result:    dict,
     buffett_result:   dict | None = None,
-    greenblatt_result: dict | None = None,          # display only; not scored (ISSUE-008)
-    earnings_revision_result: dict | None = None,   # P1 forward momentum; 12% weight
-    profitability_result: dict | None = None,        # P1 structural quality; 12% weight
-    fcf_quality_result: dict | None = None,          # P1 cash generation quality; 10% weight
+    greenblatt_result: dict | None = None,            # display only; not scored (ISSUE-008)
+    earnings_revision_result: dict | None = None,     # P1 forward momentum; 12% weight
+    profitability_result: dict | None = None,          # P1 structural quality; 12% weight
+    fcf_quality_result: dict | None = None,            # P1 cash generation quality; 10% weight
+    capital_allocation_result: dict | None = None,     # P2 capital allocation; 8% weight
 ) -> dict:
     """
-    Ten-factor composite score (fewer when optional results are None for
+    Eleven-factor composite score (fewer when optional results are None for
     backward-compatibility with older cached analyses).
 
     All input dicts are the return values of their respective score() functions:
@@ -197,6 +199,8 @@ def enhanced_composite(
       profitability_result        → profitability.ProfitabilityAnalyzer.get_profitability_score()
                                    (optional; defaults to neutral 50 when not available)
       fcf_quality_result          → fcf_quality.FCFQualityAnalyzer.get_fcf_quality_score()
+                                   (optional; defaults to neutral 50 when not available)
+      capital_allocation_result   → capital_allocation.CapitalAllocationAnalyzer.get_capital_allocation_score()
                                    (optional; defaults to neutral 50 when not available)
 
     Returns a dict with composite_score (0-100), verdict, and per-pillar
@@ -222,6 +226,8 @@ def enhanced_composite(
     p_pct  = _p_raw if _p_raw is not None else 50  # neutral fallback only when data absent
     _fcf_raw = fcf_quality_result.get("fcf_quality_score") if fcf_quality_result else None
     fcf_pct  = _fcf_raw if _fcf_raw is not None else 50  # neutral fallback only when data absent
+    _ca_raw = capital_allocation_result.get("capital_allocation_score") if capital_allocation_result else None
+    ca_pct  = _ca_raw if _ca_raw is not None else 50  # neutral fallback only when data absent
 
     # ── Weighted sum ──────────────────────────────────────────────────────────
     raw_score = (
@@ -234,7 +240,8 @@ def enhanced_composite(
         a_pct  * ENHANCED_WEIGHTS["altman"]            +
         er_pct * ENHANCED_WEIGHTS["earnings_revision"]  +
         p_pct  * ENHANCED_WEIGHTS["profitability"]     +
-        fcf_pct * ENHANCED_WEIGHTS["fcf_quality"]
+        fcf_pct * ENHANCED_WEIGHTS["fcf_quality"]      +
+        ca_pct  * ENHANCED_WEIGHTS["capital_allocation"]
     )
 
     # ── Altman hard cap — distress zone stocks cannot score above 50 ──────────
@@ -296,16 +303,17 @@ def enhanced_composite(
 
     return {
         # Pillar percentages
-        "graham_pct":             round(g_pct,  1),
-        "buffett_pct":            round(b_pct,  1),
-        "quality_pct":            round(q_pct,  1),
-        "momentum_pct":           round(m_pct,  1),
-        "piotroski_pct":          round(f_pct,  1),
-        "risk_pct":               round(r_pct,  1),
-        "altman_pct":             round(a_pct,  1),
-        "earnings_revision_pct":  round(er_pct, 1),
-        "profitability_pct":      round(p_pct,  1),
-        "fcf_quality_pct":        round(fcf_pct, 1),
+        "graham_pct":               round(g_pct,  1),
+        "buffett_pct":              round(b_pct,  1),
+        "quality_pct":              round(q_pct,  1),
+        "momentum_pct":             round(m_pct,  1),
+        "piotroski_pct":            round(f_pct,  1),
+        "risk_pct":                 round(r_pct,  1),
+        "altman_pct":               round(a_pct,  1),
+        "earnings_revision_pct":    round(er_pct, 1),
+        "profitability_pct":        round(p_pct,  1),
+        "fcf_quality_pct":          round(fcf_pct, 1),
+        "capital_allocation_pct":   round(ca_pct,  1),
 
         # Greenblatt — display only, not in weighted sum (see ISSUE-008)
         "greenblatt_earnings_yield": (
@@ -334,6 +342,11 @@ def enhanced_composite(
         # FCF Quality signal (display + scoring)
         "fcf_quality_signal": (
             fcf_quality_result.get("signal") if fcf_quality_result else None
+        ),
+
+        # Capital Allocation signal (display + scoring)
+        "capital_allocation_signal": (
+            capital_allocation_result.get("signal") if capital_allocation_result else None
         ),
 
         # Score and verdict

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import functools
 from codes.data   import cache, sec_data
-from codes.models import graham, quality, momentum, piotroski, altman, risk_metrics, greenblatt, buffett, earnings_revision, profitability as profitability_model, fcf_quality as fcf_quality_model
+from codes.models import graham, quality, momentum, piotroski, altman, risk_metrics, greenblatt, buffett, earnings_revision, profitability as profitability_model, fcf_quality as fcf_quality_model, capital_allocation as capital_allocation_model
 from codes.engine import scorer, screener, universe
 import codes.portfolio as portfolio_engine
 # ── App Init ──────────────────────────────────────────────────────────────────
@@ -240,11 +240,21 @@ def analyze_stock(symbol: str) -> dict:
         fcf_quality_result = fcf_quality_model.FCFQualityAnalyzer(symbol, sec_facts).get_fcf_quality_score()
     except Exception as e:
         print(f"FCF quality calculation failed: {e}")
+
+    # Capital Allocation score (P2)
+    capital_allocation_result = None
+    try:
+        capital_allocation_result = capital_allocation_model.CapitalAllocationAnalyzer(
+            symbol, sec_facts, price
+        ).get_capital_allocation_score()
+    except Exception as e:
+        print(f"Capital allocation calculation failed: {e}")
     # Enhanced 9-factor composite
     enhanced = scorer.enhanced_composite(
         g, q, m_result, piotroski_result, risk_result, altman_result, buffett_result,
         greenblatt_result=greenblatt_result, earnings_revision_result=earnings_revision_result,
-        profitability_result=profitability_result, fcf_quality_result=fcf_quality_result
+        profitability_result=profitability_result, fcf_quality_result=fcf_quality_result,
+        capital_allocation_result=capital_allocation_result,
     )
     result = {
         "symbol":    symbol,
@@ -264,6 +274,7 @@ def analyze_stock(symbol: str) -> dict:
         "earnings_revision": earnings_revision_result,
         "profitability": profitability_result,
         "fcf_quality": fcf_quality_result,
+        "capital_allocation": capital_allocation_result,
         "enhanced":    enhanced,
         # ─────────────────────────────────────────────────
         "price_history": hist.to_dict() if hist is not None else None,
@@ -940,16 +951,17 @@ def _composite_banner(data: dict) -> html.Div:
     if has_enh:
         has_buffett = enhanced.get("buffett_pct") is not None
         pillars = [
-            ("Graham",    enhanced.get("graham_pct",    0), "11%"),
-            ("Buffett",   enhanced.get("buffett_pct",   0), "10%"),
-            ("Quality",   enhanced.get("quality_pct",   0), "14%"),
-            ("Momentum",  enhanced.get("momentum_pct",  0), "11%"),
-            ("Piotroski", enhanced.get("piotroski_pct", 0), "11%"),
+            ("Graham",    enhanced.get("graham_pct",    0), "12%"),
+            ("Buffett",   enhanced.get("buffett_pct",   0), " 6%"),
+            ("Quality",   enhanced.get("quality_pct",   0), "10%"),
+            ("Momentum",  enhanced.get("momentum_pct",  0), "12%"),
+            ("Piotroski", enhanced.get("piotroski_pct", 0), " 9%"),
             ("Risk",      enhanced.get("risk_pct",      0), " 6%"),
             ("Altman",    enhanced.get("altman_pct",    0), " 3%"),
             ("E.Rev",     enhanced.get("earnings_revision_pct", 0), "12%"),
             ("Profit.",   enhanced.get("profitability_pct", 0), "12%"),
             ("FCF Qual.", enhanced.get("fcf_quality_pct", 0), "10%"),
+            ("Cap.Alloc", enhanced.get("capital_allocation_pct", 0), " 8%"),
         ]
         score_label = "Enhanced Score"
     else:
@@ -1049,6 +1061,81 @@ def _fcf_quality_card(data: dict) -> html.Div:
         html.Div(style={"display": "flex", "alignItems": "center",
                         "gap": "10px", "padding": "14px 18px 10px"}, children=[
             html.Span("FCF Quality",
+                      style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{score:.0f}/100",
+                      style={"fontSize": "22px", "fontWeight": "800", "color": sig_color}),
+            html.Span(f"— {signal.replace('_', ' ').title()}",
+                      style={"fontSize": "13px", "color": sig_color}),
+        ]),
+        html.Div(metric_rows, className="px-xl pb-2xl"),
+    ])
+
+
+def _capital_allocation_card(data: dict) -> html.Div:
+    """Capital Allocation card: key metrics display."""
+    ca = data.get("capital_allocation") or {}
+    if not ca:
+        return html.Div()
+
+    score  = ca.get("capital_allocation_score")
+    signal = ca.get("signal", "")
+    if score is None:
+        return html.Div()
+
+    sig_color = {
+        "EXCELLENT_ALLOCATOR": GREEN,
+        "GOOD_ALLOCATOR":      BLUE,
+        "AVERAGE_ALLOCATOR":   AMBER,
+        "POOR_ALLOCATOR":      MUTED,
+        "CAPITAL_DESTROYER":   RED,
+    }.get(signal, MUTED)
+
+    def _fmt(v, fmt=".2f", prefix="", suffix=""):
+        if v is None:
+            return "N/A"
+        try:
+            return f"{prefix}{v:{fmt}}{suffix}"
+        except (ValueError, TypeError):
+            return "N/A"
+
+    roic_spread_color = GREEN if (ca.get("roic_spread") or 0) > 0 else RED
+    dilution_color    = GREEN if (ca.get("dilution_rate") or 1) <= 0 else (
+        AMBER if (ca.get("dilution_rate") or 0) < 3 else RED
+    )
+    debt_color        = GREEN if (ca.get("debt_trend") or 1) <= 0 else AMBER
+
+    metrics = [
+        ("ROIC",              _fmt(ca.get("roic"), ".1f", suffix="%")),
+        ("ROIC Spread (−10%)", html.Span(_fmt(ca.get("roic_spread"), "+.1f", suffix="%"),
+                                          style={"color": roic_spread_color, "fontWeight": "600"})),
+        ("Incremental ROIC",  _fmt(ca.get("incremental_roic"), ".1f", suffix="%")),
+        ("Reinvestment Rate", _fmt(ca.get("reinvestment_rate"), ".1%") if ca.get("reinvestment_rate") is not None else "N/A"),
+        ("Reinvest Method",   ca.get("reinvestment_method", "N/A")),
+        ("Buyback Yield",     _fmt(ca.get("buyback_yield"), ".2f", suffix="%")),
+        ("Dividend Yield",    _fmt(ca.get("dividend_yield_implied"), ".2f", suffix="%")),
+        ("Shareholder Yield", _fmt(ca.get("shareholder_yield"), ".2f", suffix="%")),
+        ("Dilution Rate",     html.Span(_fmt(ca.get("dilution_rate"), "+.2f", suffix="%"),
+                                         style={"color": dilution_color, "fontWeight": "600"})),
+        ("Debt Trend (Δ D/E)", html.Span(_fmt(ca.get("debt_trend"), "+.3f"),
+                                           style={"color": debt_color, "fontWeight": "600"})),
+    ]
+
+    metric_rows = [
+        html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "padding": "4px 0", "borderBottom": f"1px solid {BORDER}",
+            "fontSize": "12px",
+        }, children=[
+            html.Span(lbl if isinstance(lbl, str) else lbl, className="text-muted"),
+            html.Span(val) if isinstance(val, str) else val,
+        ])
+        for lbl, val in metrics
+    ]
+
+    return html.Div(className="scorecard", children=[
+        html.Div(style={"display": "flex", "alignItems": "center",
+                        "gap": "10px", "padding": "14px 18px 10px"}, children=[
+            html.Span("Capital Allocation",
                       style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
             html.Span(f"{score:.0f}/100",
                       style={"fontSize": "22px", "fontWeight": "800", "color": sig_color}),
@@ -1515,6 +1602,7 @@ _stat(
     )
     risk_card = _risk_card(data)
     fcf_quality_card = _fcf_quality_card(data)
+    capital_allocation_card = _capital_allocation_card(data)
    
     charts_row = html.Div(
         className="charts-grid",
@@ -1534,6 +1622,7 @@ _stat(
         quant_row,
         risk_card,
         fcf_quality_card,
+        capital_allocation_card,
         charts_row,
         div_chart,
         html.Div(

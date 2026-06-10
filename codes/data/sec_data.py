@@ -822,6 +822,20 @@ def fetch_company_facts(symbol: str, include_delisted_warning: bool = True) -> d
     ])
     capex_df = _try_concepts(facts, _capex_concepts(sector_cls))
 
+    # ── R&D expenditure (needed for capital allocation reinvestment rate) ─────
+    r_and_d_df = _try_concepts(facts, [
+        "ResearchAndDevelopmentExpense",
+        "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+    ])
+
+    # ── Acquisitions (M&A spend, cash outflow) ────────────────────────────────
+    acquisitions_df = _try_concepts(facts, [
+        "PaymentsToAcquireBusinessesNetOfCashAcquired",
+        "PaymentsToAcquireBusinessesGross",
+        "BusinessAcquisitionCostOfAcquiredEntityTransactionCosts",
+        "PaymentsForProceedsFromBusinessesAndInterestInAffiliates",
+    ])
+
     # ── Dividends ─────────────────────────────────────────────────────────────
     div_df = _try_concepts(facts, [
         "PaymentsOfDividendsCommonStock",
@@ -888,6 +902,8 @@ def fetch_company_facts(symbol: str, include_delisted_warning: bool = True) -> d
         # Cash flow
         "op_cf":             operating_cf_df.to_dict("records"),
         "capex":             capex_df.to_dict("records"),
+        "r_and_d":           r_and_d_df.to_dict("records"),
+        "acquisitions":      acquisitions_df.to_dict("records"),
         "dividends":         div_df.to_dict("records"),
     }
 
