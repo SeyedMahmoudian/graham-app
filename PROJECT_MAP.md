@@ -118,7 +118,276 @@ value_metrics SQLite table:
 - requires (label, value, description)
 
 4. Portfolio
-- search through all the existing anazlyzed stock to see which one is a better replacement for the weak link, if none use spy
+# Portfolio Page Refactor – Multi-Portfolio Support
+
+## Objective
+Refactor the Portfolio page so users can create, manage, compare, and delete multiple portfolios instead of being limited to a single active portfolio.
+
+---
+
+## Functional Requirements
+
+### 1. Portfolio List View
+Replace the current single-portfolio page with a portfolio management page.
+
+Display all saved portfolios in a list/table/card layout.
+
+Each portfolio row/card should include:
+
+- Checkbox for selection
+- Portfolio Name
+- Number of Holdings
+- Creation Date
+- Portfolio CAGR (if available)
+- Current Value (if available)
+
+Example:
+
+☐ Growth Portfolio
+☐ Dividend Portfolio
+☐ AI Stocks Portfolio
+
+---
+
+### 2. Selection Rules
+
+#### No Portfolio Selected
+- Disable Compare button
+- Disable Delete button
+- Show empty state message
+
+#### One Portfolio Selected
+- Show the existing portfolio detail view exactly as it works today.
+- Display:
+  - Holdings table
+  - Backtest results
+  - Monte Carlo results
+  - Weak link analysis
+  - Charts
+
+#### Two Portfolios Selected
+- Enable Compare button
+- Show comparison view
+- Display portfolios side-by-side
+
+#### More Than Two Selected
+- Disable Compare button
+- Show validation message:
+
+"Select exactly 2 portfolios to compare."
+
+Delete should still remain available.
+
+---
+
+### 3. Delete Portfolios
+
+Allow multi-select deletion.
+
+Workflow:
+
+1. User selects one or more portfolios
+2. Click Delete
+3. Confirmation dialog:
+
+Delete 3 portfolios?
+This action cannot be undone.
+
+4. Delete selected portfolios
+5. Refresh portfolio list
+6. Clear selections
+
+Backend should call:
+
+delete_portfolio(portfolio_name)
+
+for each selected portfolio.
+
+---
+
+### 4. Portfolio Comparison View
+
+When exactly 2 portfolios are selected:
+
+Show:
+
+Portfolio A | Portfolio B
+
+Side-by-side comparison.
+
+## Comparison Metrics
+
+### Portfolio Summary
+
+| Metric | Portfolio A | Portfolio B |
+|----------|----------|----------|
+| Current Value | | |
+| Final Backtest Value | | |
+| CAGR | | |
+| SPY CAGR | | |
+| Alpha vs SPY | | |
+| Number of Holdings | | |
+| Created Date | | |
+
+### Holdings Comparison
+
+Show holdings for both portfolios.
+
+### Performance Charts
+
+Render both portfolios on the same chart:
+
+- Portfolio A line
+- Portfolio B line
+- SPY benchmark line
+
+### Monte Carlo Comparison
+
+Display:
+
+Portfolio A:
+- P10
+- P50
+- P90
+
+Portfolio B:
+- P10
+- P50
+- P90
+
+### Weak Link Comparison
+
+For each portfolio show:
+
+- Weakest holding
+- Worst drag_bps
+- Largest swap_delta_pct
+
+---
+
+## Determine Which Portfolio Is Better
+
+### Scoring
+
+Primary metric priority:
+
+1. Higher CAGR
+2. Higher final portfolio value
+3. Higher alpha vs SPY
+4. Better Monte Carlo P50 outcome
+5. Fewer weak-link holdings
+
+Example:
+
+score =
+  (cagr * 0.40)
++ (alpha_vs_spy * 0.25)
++ (normalized_final_value * 0.15)
++ (normalized_p50 * 0.15)
++ (weak_link_score * 0.05)
+
+### Comparison Result Banner
+
+Display:
+
+🏆 Portfolio A is stronger
+
+Reasons:
+
+- Higher CAGR
+- Better alpha vs SPY
+- Higher projected median value
+- Fewer weak-link holdings
+
+If scores are nearly identical:
+
+"Both portfolios perform similarly."
+
+---
+
+## Backend Requirements
+
+Create a new comparison service:
+
+```python
+compare_portfolios(portfolio_a_name, portfolio_b_name)
+```
+
+Returns:
+
+```python
+{
+    "winner": "Growth Portfolio",
+    "score_a": 82.4,
+    "score_b": 71.8,
+    "reasons": [
+        "Higher CAGR",
+        "Better alpha vs SPY",
+        "Higher projected median return"
+    ],
+    "portfolio_a": {...},
+    "portfolio_b": {...}
+}
+```
+
+The comparison service should:
+
+1. Load both portfolios
+2. Run simulations if not cached
+3. Calculate comparison metrics
+4. Determine winner
+5. Return comparison payload
+
+---
+
+## UI State Management
+
+```javascript
+selectedPortfolios = []
+```
+
+Rules:
+
+- length == 0 → empty state
+- length == 1 → portfolio detail view
+- length == 2 → comparison view
+- length > 2 → compare disabled
+
+Selections should persist while navigating within the portfolio page.
+
+---
+
+## Existing Functionality
+
+Do NOT modify:
+
+- run_backtest()
+- run_montecarlo()
+- analyze_weak_links()
+- run_simulation()
+
+Reuse existing simulation results whenever possible.
+
+Implement the new functionality as a layer on top of the current portfolio engine.
+
+---
+
+## Success Criteria
+
+✓ Create multiple portfolios
+
+✓ View all portfolios on one page
+
+✓ Select one portfolio and see the current detailed analysis
+
+✓ Select multiple portfolios and delete them
+
+✓ Select exactly two portfolios and compare them side-by-side
+
+✓ See an automatically generated winner with clear reasoning
+
+✓ Reuse existing backtest, Monte Carlo, and weak-link analytics without changing their behavior
+
 
 SCORER SYSTEM (UNCHANGED CORE LOGIC)
 ===
