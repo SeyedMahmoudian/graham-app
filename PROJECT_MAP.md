@@ -108,7 +108,7 @@ value_metrics SQLite table:
 - ticker (PK)
 - graham_score <-- replace with market cap, want to be able to order the table by market cap, use fmp to get this data
 - quality <-- remove this
-- updated_at
+- updated_at <-- last time we run analsis on this company
 - keep GN Price and Buffet IV
 => survives restarts, used for fast retrieval
 
