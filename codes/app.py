@@ -627,8 +627,7 @@ def update_progress(n, ready_val):
     if prog["running"]:
         pct = int(prog["done"] / prog["total"] * 100) if prog["total"] else 0
         phase_label = {
-            "cached":   "⚡ Phase 1 — parallel scoring",
-            "fetching": "🌐 Phase 2 — fetching from SEC",
+            "cached": "⚡ Scoring cached stocks",
         }.get(prog.get("phase", ""), "🔄 Processing")
         return html.Div([
             html.Span(f"{phase_label}: {prog['current']}", className="font-semibold text-info"),

@@ -1,36 +1,35 @@
 """
-Screener: batch-scores the full US equity universe.
+Screener: shows the full US equity universe as a table.
 
-Threading strategy:
-  Phase 1 — Cached stocks (no network):
-    ThreadPoolExecutor(max_workers=16) — pure CPU, fully parallel.
-    ~3,000 stocks cached → completes in a few seconds.
+Loading strategy (on-demand, no bulk SEC fetches):
+  Page load  → build stub rows from ticker map (symbol + name only, instant).
+  "Load Universe" button → enrich already-cached stocks with Graham/Quality
+                           scores (no new SEC calls).
+  Ticker click → app.analyze_stock() fetches SEC data for that one stock
+                 and calls update_stock_after_analysis() to enrich its row.
 
-  Phase 2 — Uncached stocks (need SEC EDGAR fetch):
-    ThreadPoolExecutor(max_workers=3) with a token-bucket rate limiter.
-    Keeps SEC requests at ≤ 3/sec as a courtesy to the free API.
+This means the table is always fast to display and SEC EDGAR is only hit
+when the user explicitly asks to analyze a specific ticker.
 
-SEC allows ~10 req/sec. We use 3/sec to stay polite.
+Threading:
+  Phase 1 (cached) — ThreadPoolExecutor(max_workers=16), pure CPU.
+  No Phase 2 fetch loop — SEC fetches are now on-demand via analyze_stock.
 """
 
-import time
 import threading
-import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..data import cache
 from ..data import sec_data
-from ..models import graham
-from ..models import quality
-from . import scorer
-from . import universe
+from ..models import graham, quality
+from . import scorer, universe
 
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 
 _progress: dict = {
     "running":  False,
-    "phase":    "",       # "cached" | "fetching" | ""
+    "phase":    "",
     "total":    0,
     "done":     0,
     "failed":   0,
@@ -38,22 +37,6 @@ _progress: dict = {
     "results":  [],
 }
 _lock = threading.Lock()
-
-# ── Rate limiter for SEC fetches (token-bucket, ≤ 3 calls/sec) ───────────────
-
-_sec_rate_lock = threading.Lock()
-_sec_last_call = 0.0
-_SEC_MIN_GAP   = 0.34   # seconds between SEC requests
-
-
-def _sec_rate_wait():
-    """Block until it's safe to make the next SEC request."""
-    global _sec_last_call
-    with _sec_rate_lock:
-        gap = _SEC_MIN_GAP - (time.time() - _sec_last_call)
-        if gap > 0:
-            time.sleep(gap)
-        _sec_last_call = time.time()
 
 
 # ── Progress accessors ────────────────────────────────────────────────────────
@@ -70,25 +53,58 @@ def get_screener_results() -> list[dict]:
                       key=lambda x: x["composite_score"], reverse=True)
 
 
-# ── Score one stock ───────────────────────────────────────────────────────────
+# ── Stub row (ticker-map only — no SEC, no scoring) ───────────────────────────
 
-def _score_one(symbol: str) -> dict | None:
-    """Score a single stock using lazy fetch (cache-first, SEC only when stale)."""
+def _stub_row(symbol: str, name: str = "", sector: str = "Unknown") -> dict:
+    """
+    Minimal row built without any SEC data.
+    Shown in the table immediately on page load.
+    Enriched later if the user clicks the ticker or the cached scorer runs.
+    """
+    return {
+        "symbol":          symbol,
+        "name":            name or symbol,
+        "sector":          sector,
+        "graham_score":    0,
+        "graham_max":      100,
+        "graham_pct":      0,
+        "quality_score":   0,
+        "quality_max":     100,
+        "quality_pct":     0,
+        "composite_score": 0,
+        "verdict":         "PENDING",
+        "verdict_label":   "pending",
+        "roe":             None,
+        "op_margin":       None,
+        "eps_years":       0,
+        "div_years":       0,
+        "graham_number":   None,
+        "buffett_iv":      None,
+        "price":           None,
+        "analyzed":        False,
+    }
+
+
+# ── Score one already-cached stock (no network) ───────────────────────────────
+
+def _score_cached(symbol: str) -> dict | None:
+    """
+    Score a stock that is already in the local SEC cache.
+    Never makes a network call — if cache is missing, returns None.
+    """
     try:
-        # get_financials() returns cached data instantly when up-to-date;
-        # falls back to SEC EDGAR only when no cache entry or a newer filing exists.
-        if cache.read("sec_facts", symbol) is None:
-            _sec_rate_wait()
-        cached_sec = sec_data.get_financials(symbol)
+        sec = cache.read("sec_facts", symbol)
+        if not sec:
+            return None
 
-        g    = graham.score(None, cached_sec)
-        q    = quality.score(cached_sec)
+        g    = graham.score(None, sec)
+        q    = quality.score(sec)
         comp = scorer.fundamental_only(g, q)
 
         return {
             "symbol":          symbol,
-            "name":            cached_sec.get("name", symbol),
-            "sector":          cached_sec.get("sector", "Unknown"),
+            "name":            sec.get("name", symbol),
+            "sector":          sec.get("sector", "Unknown"),
             "graham_score":    g["total_score"],
             "graham_max":      g["total_max"],
             "graham_pct":      comp["graham_pct"],
@@ -102,7 +118,6 @@ def _score_one(symbol: str) -> dict | None:
             "op_margin":       q.get("op_margin"),
             "eps_years":       g.get("eps_years", 0),
             "div_years":       g.get("div_years", 0),
-            # ── Enriched after full analysis ──────────────────────────────────
             "graham_number":   None,
             "buffett_iv":      None,
             "price":           None,
@@ -118,9 +133,6 @@ def update_stock_after_analysis(symbol: str, analysis_result: dict) -> None:
     """
     Overwrite the screener row for `symbol` with accurate data from a full
     analysis (with live price).  Called from app.py after analyze_stock().
-
-    Updates: graham_pct, quality_pct, composite_score, verdict, graham_number,
-             price, and sets analyzed=True.
     """
     g        = analysis_result.get("graham",   {})
     q        = analysis_result.get("quality",  {})
@@ -150,6 +162,7 @@ def update_stock_after_analysis(symbol: str, analysis_result: dict) -> None:
             if row["symbol"] == symbol:
                 _progress["results"][i] = {**row, **new_row_data}
                 return
+        # Symbol not yet in table — add a full row
         _progress["results"].append({
             "symbol":          symbol,
             "name":            analysis_result.get("name",   symbol),
@@ -166,103 +179,17 @@ def update_stock_after_analysis(symbol: str, analysis_result: dict) -> None:
         })
 
 
-# ── Background loader ─────────────────────────────────────────────────────────
-
-def load_universe_background(tickers: list[str] | None = None):
-    """
-    Kick off a background thread to score the full universe.
-    Safe to call multiple times — no-ops if already running.
-    """
-    with _lock:
-        if _progress["running"]:
-            return
-
-    def _worker():
-        symbols = tickers or universe.get_universe()
-
-        # Split: cached (instant) vs needs-fetch (rate-limited)
-        cached_syms   = [s for s in symbols if cache.read("sec_facts", s) is not None]
-        uncached_syms = [s for s in symbols if cache.read("sec_facts", s) is None]
-
-        with _lock:
-            _progress.update({
-                "running": True,
-                "phase":   "cached",
-                "total":   len(symbols),
-                "done":    0,
-                "failed":  0,
-                "current": "",
-            })
-
-        print(f"\n⚡ Screener: {len(cached_syms)} cached | {len(uncached_syms)} need fetch")
-
-        def _record(symbol, row):
-            with _lock:
-                _progress["current"] = symbol
-                _progress["done"]   += 1
-                if row:
-                    _progress["results"] = [
-                        r for r in _progress["results"] if r["symbol"] != symbol
-                    ]
-                    _progress["results"].append(row)
-                else:
-                    _progress["failed"] += 1
-
-        # ── Phase 1: fully parallel for cached stocks ─────────────────────────
-        if cached_syms:
-            with _lock:
-                _progress["phase"] = "cached"
-            with ThreadPoolExecutor(max_workers=16) as exe:
-                futures = {exe.submit(_score_one, s): s for s in cached_syms}
-                for future in as_completed(futures):
-                    _record(futures[future], future.result())
-            print(f"  ✅ Phase 1 done: {len(cached_syms)} cached stocks scored")
-            # Restore prior full-analysis data immediately after Phase 1
-            # so users see enriched rows without waiting for Phase 2
-            _enrich_from_analysis_cache()
-
-        # ── Phase 2: rate-limited fetching for uncached stocks ────────────────
-        if uncached_syms:
-            with _lock:
-                _progress["phase"] = "fetching"
-            print(f"  🌐 Phase 2: fetching {len(uncached_syms)} stocks from SEC EDGAR…")
-            with ThreadPoolExecutor(max_workers=3) as exe:
-                futures = {exe.submit(_score_one, s): s for s in uncached_syms}
-                for future in as_completed(futures):
-                    _record(futures[future], future.result())
-            print(f"  ✅ Phase 2 done: {len(uncached_syms)} stocks fetched")
-
-        with _lock:
-            _progress["running"] = False
-            _progress["phase"]   = ""
-            _progress["current"] = ""
-
-        total   = _progress["done"]
-        failed  = _progress["failed"]
-        print(f"\n✅ Screener complete: {total} scored, {failed} failed\n")
-
-    threading.Thread(target=_worker, daemon=True).start()
-
-
-# ── Enrich screener rows from persisted analysis cache ───────────────────────
+# ── Enrich screener rows from persisted analysis cache ────────────────────────
 
 def _enrich_from_analysis_cache() -> int:
     """
-    After building base screener rows from SEC facts, scan the .cache directory
-    for any previously-saved full analysis results (cache kind 'analysis') and
-    apply the enriched fields (price, graham_number, buffett_iv, composite_score,
-    verdict, etc.) to the matching rows in _progress["results"].
-
-    This restores the post-analysis state of the screener table after a reboot
-    so users don't lose the context of stocks they've already analysed.
-
-    Returns the number of rows enriched.
+    Apply enriched fields from any previously-saved full analysis results
+    so reboots don't lose data the user already fetched.
     """
     analysis_symbols = cache.list_cached_kind("analysis")
     if not analysis_symbols:
         return 0
 
-    # Build a fast lookup: symbol → row index
     with _lock:
         idx_map = {row["symbol"]: i for i, row in enumerate(_progress["results"])}
 
@@ -278,7 +205,6 @@ def _enrich_from_analysis_cache() -> int:
         comp     = data.get("composite",{}) or {}
         b        = data.get("buffett",  {}) or {}
 
-        # Mirror the same logic as update_stock_after_analysis()
         g_pct     = enhanced.get("graham_pct")    or comp.get("graham_pct",    0)
         q_pct     = enhanced.get("quality_pct")   or comp.get("quality_pct",   0)
         composite = enhanced.get("composite_score") or comp.get("composite_score", 0)
@@ -302,7 +228,6 @@ def _enrich_from_analysis_cache() -> int:
             if i is not None:
                 _progress["results"][i] = {**_progress["results"][i], **patch}
             else:
-                # Stock wasn't in universe cache — add a minimal row
                 _progress["results"].append({
                     "symbol":          sym,
                     "name":            data.get("name",   sym),
@@ -333,42 +258,128 @@ def _enrich_from_analysis_cache() -> int:
     return enriched
 
 
-# ── Load cached only (instant startup) ───────────────────────────────────────
+# ── "Load Universe" button handler ────────────────────────────────────────────
+
+def load_universe_background(tickers: list[str] | None = None):
+    """
+    Score only already-cached stocks (no new SEC fetches).
+    Uncached stocks remain as stub rows — they get scored when the user
+    clicks their ticker and analyze_stock() runs.
+
+    Safe to call multiple times — no-ops if already running.
+    """
+    with _lock:
+        if _progress["running"]:
+            return
+
+    def _worker():
+        symbols = tickers or universe.get_universe()
+        cached_syms = [s for s in symbols if cache.read("sec_facts", s) is not None]
+
+        with _lock:
+            _progress.update({
+                "running": True,
+                "phase":   "cached",
+                "total":   len(cached_syms),
+                "done":    0,
+                "failed":  0,
+                "current": "",
+            })
+
+        print(f"\n⚡ Screener: scoring {len(cached_syms)} cached stocks "
+              f"({len(symbols) - len(cached_syms)} uncached — fetch on click)")
+
+        def _record(symbol, row):
+            with _lock:
+                _progress["current"] = symbol
+                _progress["done"]   += 1
+                if row:
+                    _progress["results"] = [
+                        r for r in _progress["results"] if r["symbol"] != symbol
+                    ]
+                    _progress["results"].append(row)
+                else:
+                    _progress["failed"] += 1
+
+        if cached_syms:
+            with ThreadPoolExecutor(max_workers=16) as exe:
+                futures = {exe.submit(_score_cached, s): s for s in cached_syms}
+                for future in as_completed(futures):
+                    _record(futures[future], future.result())
+            print(f"  ✅ Scored {len(cached_syms)} cached stocks")
+            _enrich_from_analysis_cache()
+
+        with _lock:
+            _progress["running"] = False
+            _progress["phase"]   = ""
+            _progress["current"] = ""
+
+        total  = _progress["done"]
+        failed = _progress["failed"]
+        print(f"✅ Screener ready: {total} scored, {failed} failed\n")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+# ── Startup: instant table from ticker map + cached analysis ──────────────────
 
 def load_cached_only() -> list[dict]:
     """
-    Score only already-cached stocks (instant — no network).
-    Returns sorted results list and populates shared state.
-    After building base rows, restores any prior full-analysis enrichment
-    from the persistent analysis cache so reboots don't lose that data.
+    Called at startup.  Builds the initial screener table instantly:
+      1. Stub rows for every ticker in the universe (name from ticker map).
+      2. Overwrite stubs with scored rows for any already-cached SEC data.
+      3. Enrich with full analysis data for tickers the user has clicked before.
+
+    No SEC EDGAR requests are made here.
     """
-    symbols = universe.get_cached_universe()
-    if not symbols:
+    all_symbols = universe.get_universe()
+    if not all_symbols:
         return []
 
-    print(f"  ⚡ load_cached_only: {len(symbols)} symbols in parallel…")
-    results = []
+    # Build name map from SEC ticker map (already cached locally)
+    try:
+        ticker_map = sec_data.get_ticker_map()
+    except Exception:
+        ticker_map = {}
 
-    with ThreadPoolExecutor(max_workers=16) as exe:
-        futures = {exe.submit(_score_one, s): s for s in symbols}
-        for future in as_completed(futures):
-            row = future.result()
-            if row:
-                results.append(row)
-
-    results.sort(key=lambda x: x["composite_score"], reverse=True)
+    # Step 1: stub rows for every symbol
+    results: list[dict] = []
+    for sym in all_symbols:
+        entry = ticker_map.get(sym, {})
+        results.append(_stub_row(sym, name=entry.get("name", sym)))
 
     with _lock:
         _progress["results"] = results
 
-    # Restore enriched analysis data from persistent cache
+    # Step 2: score already-cached stocks (parallel, no network)
+    cached_syms = [s for s in all_symbols if cache.read("sec_facts", s) is not None]
+    if cached_syms:
+        print(f"  ⚡ Scoring {len(cached_syms)} cached stocks at startup…")
+        scored: list[dict] = []
+        with ThreadPoolExecutor(max_workers=16) as exe:
+            futures = {exe.submit(_score_cached, s): s for s in cached_syms}
+            for future in as_completed(futures):
+                row = future.result()
+                if row:
+                    scored.append(row)
+
+        # Merge scored rows into results list
+        scored_map = {r["symbol"]: r for r in scored}
+        with _lock:
+            _progress["results"] = [
+                scored_map.get(r["symbol"], r)
+                for r in _progress["results"]
+            ]
+
+    # Step 3: restore full-analysis enrichment
     _enrich_from_analysis_cache()
 
-    # Re-sort after enrichment so composite scores reflect full analysis
     with _lock:
         _progress["results"].sort(
             key=lambda x: x.get("composite_score") or 0, reverse=True
         )
 
-    print(f"  ✅ {len(_progress['results'])} stocks ready")
+    total_scored = len(cached_syms)
+    total_stubs  = len(all_symbols) - total_scored
+    print(f"  ✅ {total_scored} scored + {total_stubs} stub rows ready (no SEC fetches)")
     return _progress["results"]
