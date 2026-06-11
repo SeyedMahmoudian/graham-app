@@ -227,9 +227,9 @@ Acceptance Criteria:
 
 ## ISSUE-002
 
-Status: [closed]
+Status: []
 
-Title: Veirfy new coloring system
+Title: scrolling in tabs needs to be independent 
 
 Priority: Low
 
@@ -238,10 +238,10 @@ Files: app.py
 * 
 
 Problem:
-*  the new coloring system in stats row must be logical, if the low number is good then the colors must be green and if higher is worse then red.
+* when i am scrolling in one tab and switch to other tab it picks up where i was scrolling in the other tab, each tab needs to be independent 
 
 Acceptance Criteria:
-* corrected and verified that color picking is valid
+* scrolling becomes independent 
 
 
 ---
