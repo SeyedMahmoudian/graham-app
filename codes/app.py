@@ -1,7 +1,7 @@
 """
 Graham Score App — Full Quant Version
 Pure Python / Dash with SEC EDGAR + Alpha Vantage
-Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)
+Enhanced score uses the orthogonal factor weights defined in codes.engine.scorer.
 """
 import traceback
 import sys
@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import functools
 from codes.data   import cache, sec_data
-from codes.models import graham, quality, momentum, piotroski, altman, risk_metrics, greenblatt, buffett, earnings_revision, profitability as profitability_model, fcf_quality as fcf_quality_model, capital_allocation as capital_allocation_model, regime as regime_model, insider_activity as insider_activity_model,factor_momentum as factor_momentum_model
+from codes.models import graham, quality, momentum, piotroski, altman, risk_metrics, greenblatt, buffett, earnings_revision, profitability as profitability_model, fcf_quality as fcf_quality_model, capital_allocation as capital_allocation_model, growth_quality as growth_quality_model, regime as regime_model, insider_activity as insider_activity_model, factor_momentum as factor_momentum_model, alternative_data as alternative_data_model
 from codes.engine import scorer, screener, universe
 import codes.portfolio as portfolio_engine
 # ── App Init ──────────────────────────────────────────────────────────────────
@@ -249,6 +249,14 @@ def analyze_stock(symbol: str) -> dict:
         ).get_capital_allocation_score()
     except Exception as e:
         print(f"Capital allocation calculation failed: {e}")
+    # Growth Quality score (P2)
+    growth_quality_result = None
+    try:
+        growth_quality_result = growth_quality_model.GrowthQualityAnalyzer(
+            symbol, sec_facts
+        ).get_growth_quality_score()
+    except Exception as e:
+        print(f"Growth quality calculation failed: {e}")
     # Insider Activity (P4)
     insider_activity_result = None
     try:
@@ -277,12 +285,19 @@ def analyze_stock(symbol: str) -> dict:
         )
     except Exception as e:
         print(f"Factor momentum calculation failed: {e}")
-    # Enhanced 9-factor composite
+    # Alternative Data (P4 framework only)
+    alternative_data_result = None
+    try:
+        alternative_data_result = alternative_data_model.get_alternative_data_score(symbol)
+    except Exception as e:
+        print(f"Alternative data framework failed: {e}")
+    # Enhanced orthogonal composite
     enhanced = scorer.enhanced_composite(
         g, q, m_result, piotroski_result, risk_result, altman_result, buffett_result,
         greenblatt_result=greenblatt_result, earnings_revision_result=earnings_revision_result,
         profitability_result=profitability_result, fcf_quality_result=fcf_quality_result,
         capital_allocation_result=capital_allocation_result,
+        growth_quality_result=growth_quality_result,
         factor_momentum_result=factor_momentum_result,
     )
 
@@ -329,8 +344,10 @@ def analyze_stock(symbol: str) -> dict:
         "profitability": profitability_result,
         "fcf_quality": fcf_quality_result,
         "capital_allocation": capital_allocation_result,
+        "growth_quality": growth_quality_result,
         "insider_activity":   insider_activity_result,
         "factor_momentum": factor_momentum_result,
+        "alternative_data": alternative_data_result,
         "regime":             regime_result,
         "regime_overlay":     regime_overlay,
         "enhanced":    enhanced,
@@ -367,7 +384,7 @@ app.layout = html.Div(className="app-container", children=[
         html.Div("📊", className="app-header-icon"),
         html.Div(className="app-header-content", children=[
             html.H1("Graham Score — Quant Edition"),
-            html.P("Graham (15%) + Buffett (25%) + Quality (18%) + Momentum (14%) + Piotroski (14%) + Risk (8%) + Altman (6%)")
+            html.P("Orthogonal factor score: Value, Quality, Momentum, Profitability, FCF Quality, Earnings Revisions, Capital Allocation, Growth Quality, Risk, and Altman.")
         ])
     ]),
     # Tabs
@@ -780,7 +797,7 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, current_page
         ("Company",     "name",             "Company name."),
         ("Sector",      "sector",           "Industry sector from SEC filings."),
         ("Market Cap ↕","market_cap",       "Market capitalization (price × shares outstanding, $M). Populated after running full analysis on a stock."),
-        ("Composite ↕", "composite_score",  "Composite score (0–100): weighted blend of all scored pillars. Pre-analysis uses Graham+Quality only; run full analysis to include Buffett (25%), Momentum, Piotroski, Risk, and Altman Z."),
+        ("Composite ↕", "composite_score",  "Composite score (0–100): weighted blend of the orthogonal scoring pillars. Pre-analysis uses Graham+Quality only; run full analysis to include momentum, quality, forward revisions, growth, risk, and safety signals."),
         ("GN Price ↕",  "graham_number",    "Graham Number — intrinsic value estimate: √(22.5 × EPS × BVPS). Green = current price is below this number (margin of safety exists). Populated after running full analysis on a stock."),
         ("Buffett IV ↕","buffett_iv",       "Buffett Intrinsic Value — two-stage DCF on owner earnings (FCF/share or EPS) at 12% discount rate, 3% terminal growth. Green = current price is below IV. Populated after running full analysis on a stock."),
         ("Updated",     "updated_at",       "Date this stock was last fully analyzed."),
@@ -992,7 +1009,7 @@ def load_universe(n_clicks, n_load):
 # ── New quant UI helpers ──────────────────────────────────────────────────────
 def _composite_banner(data: dict) -> html.Div:
     """
-    Smart composite banner: shows 6-pillar enhanced composite when available,
+    Smart composite banner: shows enhanced orthogonal composite when available,
     falls back to original 3-pillar composite for older cached results.
     """
     enhanced = data.get("enhanced") or {}
@@ -1005,20 +1022,17 @@ def _composite_banner(data: dict) -> html.Div:
     score         = src.get("composite_score", 0) or 0
     # Pillar list
     if has_enh:
-        has_buffett = enhanced.get("buffett_pct") is not None
         pillars = [
             ("Graham",    enhanced.get("graham_pct",    0), "12%"),
-            ("Buffett",   enhanced.get("buffett_pct",   0), " 6%"),
-            ("Quality",   enhanced.get("quality_pct",   0), "10%"),
+            ("Quality",   enhanced.get("quality_pct",   0), "18%"),
             ("Momentum",  enhanced.get("momentum_pct",  0), "12%"),
-            ("Piotroski", enhanced.get("piotroski_pct", 0), " 9%"),
             ("Risk",      enhanced.get("risk_pct",      0), " 6%"),
             ("Altman",    enhanced.get("altman_pct",    0), " 3%"),
             ("E.Rev",     enhanced.get("earnings_revision_pct", 0), "12%"),
             ("Profit.",   enhanced.get("profitability_pct", 0), "12%"),
             ("FCF Qual.", enhanced.get("fcf_quality_pct", 0), "10%"),
             ("Cap.Alloc", enhanced.get("capital_allocation_pct", 0), " 8%"),
-            ("Factor Mom.", enhanced.get("factor_momentum_pct", 0), " 7%"),
+            ("Growth Q.", enhanced.get("growth_quality_pct", 0), " 7%"),
         ]
         score_label = "Enhanced Score"
     else:
@@ -1203,6 +1217,60 @@ def _capital_allocation_card(data: dict) -> html.Div:
     ])
 
 
+def _growth_quality_card(data: dict) -> html.Div:
+    """Growth Quality card: 10-year growth quality and reinvestment durability."""
+    gq = data.get("growth_quality") or {}
+    if not gq:
+        return html.Div()
+
+    score = gq.get("growth_quality_score")
+    signal = gq.get("signal", "Neutral")
+    if score is None:
+        return html.Div()
+
+    sig_color = {
+        "Bullish": GREEN,
+        "Neutral": AMBER,
+        "Bearish": RED,
+    }.get(signal, MUTED)
+
+    def _fmt(v, decimals=1, suffix="%"):
+        return f"{v:.{decimals}f}{suffix}" if v is not None else "N/A"
+
+    metrics = [
+        ("Revenue CAGR 10Y", _fmt(gq.get("rev_cagr_10y"))),
+        ("EPS CAGR 10Y", _fmt(gq.get("eps_cagr_10y"))),
+        ("FCF CAGR 10Y", _fmt(gq.get("fcf_cagr_10y"))),
+        ("Margin Stability", _fmt(gq.get("margin_stability"), 2, " pp")),
+        ("Incremental ROIC", _fmt(gq.get("incremental_roic"))),
+    ]
+
+    metric_rows = [
+        html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "padding": "4px 0", "borderBottom": f"1px solid {BORDER}",
+            "fontSize": "12px",
+        }, children=[
+            html.Span(lbl, className="text-muted"),
+            html.Span(val, style={"color": TEXT, "fontWeight": "600"}),
+        ])
+        for lbl, val in metrics
+    ]
+
+    return html.Div(className="scorecard", children=[
+        html.Div(style={"display": "flex", "alignItems": "center",
+                        "gap": "10px", "padding": "14px 18px 10px"}, children=[
+            html.Span("Growth Quality",
+                      style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{score:.0f}/100",
+                      style={"fontSize": "22px", "fontWeight": "800", "color": sig_color}),
+            html.Span(f"\u2014 {signal}",
+                      style={"fontSize": "13px", "color": sig_color}),
+        ]),
+        html.Div(metric_rows, className="px-xl pb-2xl"),
+    ])
+
+
 def _insider_activity_card(data: dict) -> html.Div:
     """Insider buying/selling activity card."""
     ia = data.get("insider_activity") or {}
@@ -1304,6 +1372,55 @@ def _factor_momentum_card(data: dict) -> html.Div:
                       style={"fontSize": "13px", "color": sig_color}),
         ]),
         html.Div(metric_rows, className="px-xl pb-2xl"),
+    ])
+
+
+def _alternative_data_card(data: dict) -> html.Div:
+    """Alternative Data card: provider-ready P4 framework placeholders."""
+    ad = data.get("alternative_data") or {}
+    if not ad:
+        return html.Div()
+
+    score = ad.get("alternative_data_score")
+    signal = ad.get("signal", "NEUTRAL")
+    status = ad.get("status", "STUB")
+    if score is None:
+        return html.Div()
+
+    sig_color = {"BULLISH": GREEN, "NEUTRAL": AMBER, "BEARISH": RED}.get(signal, MUTED)
+    signals = ad.get("signals") or []
+
+    rows = [
+        html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "gap": "12px", "padding": "5px 0", "borderBottom": f"1px solid {BORDER}",
+            "fontSize": "12px",
+        }, children=[
+            html.Div([
+                html.Div(s.get("label", s.get("name", "Signal")),
+                         style={"color": TEXT, "fontWeight": "600"}),
+                html.Div(s.get("description", ""),
+                         style={"color": MUTED, "fontSize": "11px", "marginTop": "1px"}),
+            ]),
+            html.Span(s.get("status", status),
+                      style={"color": MUTED, "fontWeight": "700", "whiteSpace": "nowrap"}),
+        ])
+        for s in signals
+    ]
+
+    return html.Div(className="scorecard", children=[
+        html.Div(style={
+            "display": "flex", "alignItems": "center",
+            "gap": "10px", "padding": "14px 18px 10px",
+        }, children=[
+            html.Span("Alternative Data",
+                      style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{score:.0f}/100",
+                      style={"fontSize": "22px", "fontWeight": "800", "color": sig_color}),
+            html.Span(f"\u2014 {status}",
+                      style={"fontSize": "13px", "color": MUTED}),
+        ]),
+        html.Div(rows, className="px-xl pb-2xl"),
     ])
 
 
@@ -1844,7 +1961,9 @@ _stat(
     fcf_quality_card = _fcf_quality_card(data)
     regime_card = _regime_card(data)
     capital_allocation_card = _capital_allocation_card(data)
+    growth_quality_card = _growth_quality_card(data)
     factor_momentum_card = _factor_momentum_card(data)
+    alternative_data_card = _alternative_data_card(data)
     div_chart = _div_chart(g.get("div_history", []), symbol)
     graham_details = _graham_details_card(g, b_data)
     buffett_details = _buffett_details_card(data)
@@ -1856,8 +1975,9 @@ _stat(
         html.Div(className="quant_row", children=[piotroski_card, altman_card])
         if p_data and a_data else html.Div(),
         html.Div(className="card-row", children=[fcf_quality_card, regime_card]),
-        html.Div(className="card-row", children=[capital_allocation_card, factor_momentum_card]),
-        html.Div(className="card-row", children=[_insider_activity_card(data)]),
+        html.Div(className="card-row", children=[capital_allocation_card, growth_quality_card]),
+        html.Div(className="card-row", children=[factor_momentum_card]),
+        html.Div(className="card-row", children=[_insider_activity_card(data), alternative_data_card]),
         html.Div(className="charts-grid",children=[_eps_chart(g.get("eps_history", []), symbol), _price_chart(data.get("price_history"), data.get("spy_history"), symbol),])
         )
     

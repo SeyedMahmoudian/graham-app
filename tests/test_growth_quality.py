@@ -29,6 +29,7 @@ from codes.models.growth_quality import (
     _norm_incremental_roic,
     _cagr,
 )
+from codes.engine import scorer
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -204,6 +205,20 @@ class TestSignalMapping:
     def test_bearish(self):
         assert _signal(0) == "Bearish"
         assert _signal(39.99) == "Bearish"
+
+
+def _base_scorer_args(**overrides):
+    base = dict(
+        graham_result={"total_score": 50, "total_max": 100},
+        quality_result={"total_score": 50, "total_max": 100, "roe": 12},
+        momentum_result={"total_score": 50, "total_max": 100},
+        piotroski_result={"f_score": 5, "f_score_max": 9},
+        risk_result={"risk_score": 50, "risk_score_max": 100},
+        altman_result={"risk_score": 50, "zone": "safe"},
+        buffett_result={"total_score": 50, "total_max": 100},
+    )
+    base.update(overrides)
+    return base
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -639,6 +654,40 @@ class TestSignalThresholds:
     def test_bearish_threshold_exact(self):
         assert _signal(40.0) == "Neutral"
         assert _signal(39.99) == "Bearish"
+
+
+class TestScorerIntegration:
+    def test_growth_quality_key_in_weights(self):
+        assert "growth_quality" in scorer.ENHANCED_WEIGHTS
+        assert scorer.ENHANCED_WEIGHTS["growth_quality"] == pytest.approx(0.07)
+
+    def test_enhanced_weights_sum_to_one(self):
+        assert sum(scorer.ENHANCED_WEIGHTS.values()) == pytest.approx(1.0)
+
+    def test_omitting_growth_quality_gives_neutral_50(self):
+        result = scorer.enhanced_composite(**_base_scorer_args())
+        assert result["growth_quality_pct"] == pytest.approx(50.0)
+
+    def test_growth_quality_signal_in_return_dict_when_provided(self):
+        gq = {"growth_quality_score": 75.0, "signal": "Bullish",
+              "total_score": 75.0, "total_max": 100.0}
+        result = scorer.enhanced_composite(
+            **_base_scorer_args(), growth_quality_result=gq
+        )
+        assert result["growth_quality_signal"] == "Bullish"
+
+    def test_growth_quality_impact_proportional_to_weight(self):
+        w = scorer.ENHANCED_WEIGHTS["growth_quality"]
+        args = _base_scorer_args()
+        gq_60 = {"growth_quality_score": 60.0, "total_score": 60.0, "total_max": 100.0}
+        gq_40 = {"growth_quality_score": 40.0, "total_score": 40.0, "total_max": 100.0}
+
+        res_60 = scorer.enhanced_composite(**args, growth_quality_result=gq_60)
+        res_40 = scorer.enhanced_composite(**args, growth_quality_result=gq_40)
+
+        expected_delta = (60.0 - 40.0) * w
+        actual_delta = res_60["composite_score"] - res_40["composite_score"]
+        assert math.isclose(actual_delta, expected_delta, abs_tol=0.15)
 
 
 if __name__ == "__main__":

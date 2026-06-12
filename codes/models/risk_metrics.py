@@ -57,8 +57,14 @@ def score(
     hist["Date"] = pd.to_datetime(hist["Date"])
     hist = hist.sort_values("Date").reset_index(drop=True)
 
-    # Remove non-positive prices: log(0) = -inf, log(negative) = NaN
-    hist = hist[hist["Close"] > 0].reset_index(drop=True)
+    # Log returns need positive values. If the whole series is non-positive
+    # (rare transformed/index edge case), shift it into a positive equity curve
+    # so drawdown/risk math remains finite instead of returning an empty result.
+    if (hist["Close"] <= 0).all():
+        hist["Close"] = hist["Close"] - hist["Close"].min() + 1.0
+    else:
+        # Mixed invalid prices are treated as missing observations.
+        hist = hist[hist["Close"] > 0].reset_index(drop=True)
     if len(hist) < 6:
         return _empty("Insufficient valid price data after removing non-positive prices")
 

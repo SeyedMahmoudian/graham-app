@@ -63,7 +63,8 @@ NEW P2–P3–P4 MODELS
 ===
 
 
-P4 ALTERNATIVE DATA (framework only):
+P4 ALTERNATIVE DATA :
+- alternative_data.py framework implemented
 - web traffic (stub)
 - hiring velocity (stub)
 - sentiment (stub)

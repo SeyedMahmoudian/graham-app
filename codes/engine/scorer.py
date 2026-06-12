@@ -104,36 +104,38 @@ def fundamental_only(graham_result: dict, quality_result: dict) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Enhanced composite  (6-factor model)
+# Enhanced composite  (orthogonal factor model)
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Weight breakdown (sums to 1.0):
-#   Graham     0.25   Valuation anchor (price vs intrinsic value)
-#   Quality    0.22   Business quality (ROE, margins, FCF, revenue growth)
-#   Momentum   0.18   Price trend confirmation (moving avg, RS, drawdown)
-#   Piotroski  0.18   Accounting health (9-point signal; prevents value traps)
-#   Risk       0.10   Risk-adjusted profile (Sharpe, beta, drawdown, vol)
-#   Altman     0.07   Bankruptcy risk filter (directly encoded as safety cap)
+#   Graham/Value        0.12   Valuation anchor (price vs intrinsic value)
+#   Quality             0.18   Business quality (ROE, margins, FCF, revenue growth)
+#   Momentum            0.12   Price trend confirmation (moving avg, RS, drawdown)
+#   Profitability       0.12   ROIC/ROE/margins/capital efficiency
+#   FCF Quality         0.10   Cash conversion, stability, accrual quality
+#   Earnings Revisions  0.12   Forward estimate and surprise momentum
+#   Capital Allocation  0.08   ROIC spread, reinvestment, shareholder yield
+#   Growth Quality      0.07   Long-term revenue/EPS/FCF quality
+#   Risk                0.06   Risk-adjusted profile (Sharpe, beta, drawdown, vol)
+#   Altman              0.03   Bankruptcy risk filter (directly encoded as safety cap)
 #
 # Altman also acts as a HARD CAP: distress zone stocks cannot exceed 50/100.
 
 ENHANCED_WEIGHTS = {
     "graham":             0.12,
-    "buffett":            0.06,
-    "quality":            0.10,
-    "momentum":           0.10,
-    "piotroski":          0.09,
+    "quality":            0.18,
+    "momentum":           0.12,
     "risk":               0.06,
     "altman":             0.03,
-    "earnings_revision":  0.10,
+    "earnings_revision":  0.12,
     "profitability":      0.12,
     "fcf_quality":        0.10,
     "capital_allocation": 0.08,
-    "factor_momentum":    0.07,
+    "growth_quality":     0.07,
 }
 
 ENHANCED_VERDICTS = [
-    (75, "STRONG BUY",  "strong-buy",  "All six pillars aligned — highest-conviction signal"),
+    (75, "STRONG BUY",  "strong-buy",  "Orthogonal factors aligned — highest-conviction signal"),
     (60, "BUY",         "buy",         "Strong across most factors — good risk/reward"),
     (45, "WATCH",       "watch",       "Mixed signals — monitor for better entry"),
     (30, "HOLD/WEAK",   "hold",        "Significant concerns across multiple factors"),
@@ -181,10 +183,11 @@ def enhanced_composite(
     profitability_result: dict | None = None,          # P1 structural quality; 12% weight
     fcf_quality_result: dict | None = None,            # P1 cash generation quality; 10% weight
     capital_allocation_result: dict | None = None,     # P2 capital allocation; 8% weight
-    factor_momentum_result: dict | None = None,       # P4 factor momentum; 10% weight
+    growth_quality_result: dict | None = None,         # P2 growth quality; 7% weight
+    factor_momentum_result: dict | None = None,        # P4 display-only diagnostic
 ) -> dict:
     """
-    Eleven-factor composite score (fewer when optional results are None for
+    Orthogonal composite score (fewer when optional results are None for
     backward-compatibility with older cached analyses).
 
     All input dicts are the return values of their respective score() functions:
@@ -194,7 +197,7 @@ def enhanced_composite(
       piotroski_result           → piotroski.score()
       risk_result                → risk_metrics.score()
       altman_result              → altman.score()
-      buffett_result             → buffett.score()          (optional; defaults to neutral 50)
+      buffett_result             → buffett.score()          (display/flags only)
       earnings_revision_result   → earnings_revision.get_revision_score()
                                    (optional; defaults to neutral 50 when not available)
       profitability_result        → profitability.ProfitabilityAnalyzer.get_profitability_score()
@@ -202,6 +205,8 @@ def enhanced_composite(
       fcf_quality_result          → fcf_quality.FCFQualityAnalyzer.get_fcf_quality_score()
                                    (optional; defaults to neutral 50 when not available)
       capital_allocation_result   → capital_allocation.CapitalAllocationAnalyzer.get_capital_allocation_score()
+                                   (optional; defaults to neutral 50 when not available)
+      growth_quality_result       → growth_quality.GrowthQualityAnalyzer.get_growth_quality_score()
                                    (optional; defaults to neutral 50 when not available)
 
     Returns a dict with composite_score (0-100), verdict, and per-pillar
@@ -229,22 +234,22 @@ def enhanced_composite(
     fcf_pct  = _fcf_raw if _fcf_raw is not None else 50  # neutral fallback only when data absent
     _ca_raw = capital_allocation_result.get("capital_allocation_score") if capital_allocation_result else None
     ca_pct  = _ca_raw if _ca_raw is not None else 50  # neutral fallback only when data absent
+    _gq_raw = growth_quality_result.get("growth_quality_score") if growth_quality_result else None
+    gq_pct  = _gq_raw if _gq_raw is not None else 50
     _fm_raw = factor_momentum_result.get("factor_momentum_score") if factor_momentum_result else None
     fm_pct  = _fm_raw if _fm_raw is not None else 50
     # ── Weighted sum ──────────────────────────────────────────────────────────
     raw_score = (
         g_pct  * ENHANCED_WEIGHTS["graham"]            +
-        b_pct  * ENHANCED_WEIGHTS["buffett"]           +
         q_pct  * ENHANCED_WEIGHTS["quality"]           +
         m_pct  * ENHANCED_WEIGHTS["momentum"]          +
-        f_pct  * ENHANCED_WEIGHTS["piotroski"]         +
         r_pct  * ENHANCED_WEIGHTS["risk"]              +
         a_pct  * ENHANCED_WEIGHTS["altman"]            +
         er_pct * ENHANCED_WEIGHTS["earnings_revision"]  +
         p_pct  * ENHANCED_WEIGHTS["profitability"]     +
         fcf_pct * ENHANCED_WEIGHTS["fcf_quality"]      +
         ca_pct  * ENHANCED_WEIGHTS["capital_allocation"] +
-        fm_pct  * ENHANCED_WEIGHTS["factor_momentum"]
+        gq_pct  * ENHANCED_WEIGHTS["growth_quality"]
     )
 
     # ── Altman hard cap — distress zone stocks cannot score above 50 ──────────
@@ -317,6 +322,7 @@ def enhanced_composite(
         "profitability_pct":        round(p_pct,  1),
         "fcf_quality_pct":          round(fcf_pct, 1),
         "capital_allocation_pct":   round(ca_pct,  1),
+        "growth_quality_pct":       round(gq_pct, 1),
         "factor_momentum_pct":      round(fm_pct, 1),
 
         # Greenblatt — display only, not in weighted sum (see ISSUE-008)
@@ -351,6 +357,9 @@ def enhanced_composite(
         # Capital Allocation signal (display + scoring)
         "capital_allocation_signal": (
             capital_allocation_result.get("signal") if capital_allocation_result else None
+        ),
+        "growth_quality_signal": (
+            growth_quality_result.get("signal") if growth_quality_result else None
         ),
         "factor_momentum_signal": (
             factor_momentum_result.get("signal") if factor_momentum_result else None
