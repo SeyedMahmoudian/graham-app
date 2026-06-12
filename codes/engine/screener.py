@@ -25,6 +25,8 @@ from ..models import graham
 from ..models import quality
 from . import scorer
 from . import universe
+from datetime import datetime, timezone
+
 
 
 # ── Shared state ──────────────────────────────────────────────────────────────
@@ -114,6 +116,7 @@ def _score_one(symbol: str) -> dict | None:
             "market_cap":      None,
             "price":           None,
             "analyzed":        False,
+             "updated_at":      None,
         }
     except Exception:
         return None
@@ -160,6 +163,7 @@ def update_stock_after_analysis(symbol: str, analysis_result: dict) -> None:
         "market_cap":      mkt_cap,
         "price":           analysis_result.get("price"),
         "analyzed":        True,
+         "updated_at":      datetime.now(timezone.utc).isoformat(),
     }
 
     with _lock:
@@ -316,6 +320,11 @@ def _enrich_from_analysis_cache() -> int:
         composite = enhanced.get("composite_score") or comp.get("composite_score", 0)
         verdict   = enhanced.get("verdict")       or comp.get("verdict",       "PENDING")
         vl        = enhanced.get("verdict_label") or comp.get("verdict_label", "pending")
+        entry = cache.read_entry("analysis", sym)
+        updated_at = (
+            datetime.fromtimestamp(entry["ts"], tz=timezone.utc).isoformat()
+            if entry and entry.get("ts") else None
+        )
 
         patch = {
             "graham_pct":      round(g_pct, 1),
@@ -328,6 +337,7 @@ def _enrich_from_analysis_cache() -> int:
             "market_cap":      data.get("market_cap") or g.get("market_cap"),
             "price":           data.get("price"),
             "analyzed":        True,
+            "updated_at":      updated_at,
         }
 
         with _lock:
@@ -358,6 +368,7 @@ def _enrich_from_analysis_cache() -> int:
                     "market_cap":      data.get("market_cap") or g.get("market_cap"),
                     "price":           data.get("price"),
                     "analyzed":        True,
+                    "updated_at":      updated_at,
                 })
                 idx_map[sym] = len(_progress["results"]) - 1
         enriched += 1

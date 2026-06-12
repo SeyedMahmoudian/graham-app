@@ -755,7 +755,7 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, current_page
         )
     portfolio_symbols = _get_portfolio_symbols()
     filtered = [r for r in results if not sector_filter or r.get("sector") == sector_filter]
-    text_cols = {"symbol", "name", "sector"}
+    text_cols = {"symbol", "name", "sector", "updated_at"}
     if sort_col in text_cols:
         filtered = sorted(filtered, key=lambda r: (r.get(sort_col) or "").lower(), reverse=not sort_asc)
     else:
@@ -765,12 +765,11 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, current_page
         ("Ticker",      "symbol",           "Stock ticker symbol. Click to run full analysis."),
         ("Company",     "name",             "Company name."),
         ("Sector",      "sector",           "Industry sector from SEC filings."),
-        ("Graham ↕",    "graham_pct",       "Graham score (0–100): valuation vs intrinsic value — P/E, P/B, Graham Number, current ratio, debt/equity, EPS stability, dividends. Weight: 15% in enhanced composite."),
-        
-        ("Quality ↕",   "quality_pct",      "Quality score (0–100): business quality — ROE, EPS consistency, operating margin, free cash flow, revenue growth. Weight: 18% in enhanced composite."),
+        ("Market Cap ↕","market_cap",       "Market capitalization (price × shares outstanding, $M). Populated after running full analysis on a stock."),
         ("Composite ↕", "composite_score",  "Composite score (0–100): weighted blend of all scored pillars. Pre-analysis uses Graham+Quality only; run full analysis to include Buffett (25%), Momentum, Piotroski, Risk, and Altman Z."),
         ("GN Price ↕",  "graham_number",    "Graham Number — intrinsic value estimate: √(22.5 × EPS × BVPS). Green = current price is below this number (margin of safety exists). Populated after running full analysis on a stock."),
         ("Buffett IV ↕","buffett_iv",       "Buffett Intrinsic Value — two-stage DCF on owner earnings (FCF/share or EPS) at 12% discount rate, 3% terminal growth. Green = current price is below IV. Populated after running full analysis on a stock."),
+        ("Updated",     "updated_at",       "Date this stock was last fully analyzed."),
         ("Verdict",     None,               "Investment verdict based on composite score: STRONG BUY ≥75 · BUY ≥60 · WATCH ≥45 · HOLD ≥30 · AVOID <30. * = fundamentals only (momentum not yet loaded)."),
     ]
     header_cells = []
@@ -875,11 +874,11 @@ def render_screener_table(ready, n_load, sector_filter, sort_state, current_page
             ticker_cell,
             html.Td(r["name"][:30], className="company-name-cell", title=r["name"]),
             html.Td(r["sector"][:18], className="text-xs text-muted"),
-            html.Td(html.Span(f"{r['graham_pct']:.0f}",      className=f"score-pill {get_score_class(r['graham_pct'])}")),
-            html.Td(html.Span(f"{r['quality_pct']:.0f}",     className=f"score-pill {get_score_class(r['quality_pct'])}")),
+            html.Td(_fmt_market_cap(r.get("market_cap")), className="text-xs"),
             html.Td(html.Span(f"{r['composite_score']:.0f}", className=f"score-pill {get_score_class(r['composite_score'])}")),
             gn_cell,
             biv_cell,
+            html.Td(_fmt_updated(r.get("updated_at")), className="text-xs text-muted"),
             html.Td(html.Span(verdict, className=f"verdict-pill {get_verdict_class(verdict_label)}")),
         ]))
     n_analyzed  = sum(1 for r in filtered if r.get("analyzed"))
@@ -952,7 +951,7 @@ def update_sort(n_clicks_list, sort_state):
     # asc for text columns
     if sort_state and sort_state.get("col") == col:
         return {"col": col, "asc": not sort_state["asc"]}
-    text_cols = {"symbol", "name", "sector"}
+    text_cols = {"symbol", "name", "sector", "updated_at"}
     return {"col": col, "asc": col in text_cols}
 
 @callback(
@@ -1876,6 +1875,23 @@ def format_currency(val) -> str:
         return f"${val/1e3:.2f}K"
     else:
         return f"${val:.2f}"
+def _fmt_market_cap(v) -> str:
+    if v is None:
+        return "—"
+    # v is stored in $M
+    if v >= 1e6:
+        return f"${v/1e6:.2f}T"
+    if v >= 1e3:
+        return f"${v/1e3:.2f}B"
+    return f"${v:,.0f}M"
+
+def _fmt_updated(v) -> str:
+    if not v:
+        return "—"
+    try:
+        return v[:10]  # ISO date portion
+    except Exception:
+        return "—"
 def _verdict_color(label: str) -> str:
     return {
         "strong-buy": GREEN,
