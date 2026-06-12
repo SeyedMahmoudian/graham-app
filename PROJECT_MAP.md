@@ -98,20 +98,6 @@ P5 INFRASTRUCTURE UPGRADES
 ===
 
 
-1. SEC LAZY FETCH (critical):
-- eliminate bulk ingestion
-- fetch on demand + cache reuse
-- auto-refresh if stale in portfolio simulation
-
-2. PERSISTENCE STORE:
-value_metrics SQLite table:
-- ticker (PK)
-- graham_score <-- replace with market cap, want to be able to order the table by market cap, use fmp to get this data
-- quality <-- remove this
-- updated_at <-- last time we run analsis on this company
-- keep GN Price and Buffet IV
-=> survives restarts, used for fast retrieval
-
 3. MOBILE UX:
 - stat labels expandable on tap
 - single active expanded stat

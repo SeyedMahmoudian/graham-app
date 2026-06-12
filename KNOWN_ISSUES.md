@@ -195,7 +195,7 @@ No vague instructions allowed.
 
 ## ISSUE-001
 
-Status: []
+Status: [closed]
 
 Title: Insider trading information are not coming
 
