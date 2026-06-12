@@ -1018,6 +1018,7 @@ def _composite_banner(data: dict) -> html.Div:
             ("Profit.",   enhanced.get("profitability_pct", 0), "12%"),
             ("FCF Qual.", enhanced.get("fcf_quality_pct", 0), "10%"),
             ("Cap.Alloc", enhanced.get("capital_allocation_pct", 0), " 8%"),
+            ("Factor Mom.", enhanced.get("factor_momentum_pct", 0), " 7%"),
         ]
         score_label = "Enhanced Score"
     else:
@@ -1248,6 +1249,61 @@ def _insider_activity_card(data: dict) -> html.Div:
                       style={"fontSize": "13px", "color": sig_color}),
         ]),
         html.Div(rows, className="px-xl pb-2xl"),
+    ])
+
+
+def _factor_momentum_card(data: dict) -> html.Div:
+    """Factor Momentum card: price momentum plus fundamental trend signals."""
+    fm = data.get("factor_momentum") or {}
+    if not fm:
+        return html.Div()
+
+    score = fm.get("factor_momentum_score")
+    signal = fm.get("signal", "Neutral")
+    if score is None:
+        return html.Div()
+
+    sig_color = {
+        "Bullish": GREEN,
+        "Neutral": AMBER,
+        "Bearish": RED,
+    }.get(signal, MUTED)
+
+    def _fmt(v, decimals=1, suffix="%"):
+        return f"{v:.{decimals}f}{suffix}" if v is not None else "N/A"
+
+    metrics = [
+        ("3M Return", _fmt(fm.get("return_3m"))),
+        ("6M Return", _fmt(fm.get("return_6m"))),
+        ("12M Return", _fmt(fm.get("return_12m"))),
+        ("Earnings Momentum", _fmt(fm.get("earnings_momentum"))),
+        ("ROIC Trend Slope", _fmt(fm.get("roic_trend_slope"), 2, " pp/yr")),
+    ]
+
+    metric_rows = [
+        html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "padding": "4px 0", "borderBottom": f"1px solid {BORDER}", "fontSize": "12px",
+        }, children=[
+            html.Span(lbl, className="text-muted"),
+            html.Span(val, style={"color": TEXT, "fontWeight": "600"}),
+        ])
+        for lbl, val in metrics
+    ]
+
+    return html.Div(className="scorecard", children=[
+        html.Div(style={
+            "display": "flex", "alignItems": "center",
+            "gap": "10px", "padding": "14px 18px 10px",
+        }, children=[
+            html.Span("Factor Momentum",
+                      style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{score:.0f}/100",
+                      style={"fontSize": "22px", "fontWeight": "800", "color": sig_color}),
+            html.Span(f"\u2014 {signal}",
+                      style={"fontSize": "13px", "color": sig_color}),
+        ]),
+        html.Div(metric_rows, className="px-xl pb-2xl"),
     ])
 
 
@@ -1513,7 +1569,6 @@ def _regime_card(data: dict) -> html.Div:
             ),
         ]),
     ])
-
 
 def _build_analysis_content(data: dict) -> list:
     """Render analysis data into Dash components. Pure function, no side effects."""
@@ -1789,6 +1844,7 @@ _stat(
     fcf_quality_card = _fcf_quality_card(data)
     regime_card = _regime_card(data)
     capital_allocation_card = _capital_allocation_card(data)
+    factor_momentum_card = _factor_momentum_card(data)
     div_chart = _div_chart(g.get("div_history", []), symbol)
     graham_details = _graham_details_card(g, b_data)
     buffett_details = _buffett_details_card(data)
@@ -1800,7 +1856,8 @@ _stat(
         html.Div(className="quant_row", children=[piotroski_card, altman_card])
         if p_data and a_data else html.Div(),
         html.Div(className="card-row", children=[fcf_quality_card, regime_card]),
-        html.Div(className="card-row", children=[capital_allocation_card, _insider_activity_card(data)]),
+        html.Div(className="card-row", children=[capital_allocation_card, factor_momentum_card]),
+        html.Div(className="card-row", children=[_insider_activity_card(data)]),
         html.Div(className="charts-grid",children=[_eps_chart(g.get("eps_history", []), symbol), _price_chart(data.get("price_history"), data.get("spy_history"), symbol),])
         )
     
