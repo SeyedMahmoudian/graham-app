@@ -1,0 +1,263 @@
+diff --git a/codes/portfolio.py b/codes/portfolio.py
+index 1111111..2222222 100644
+--- a/codes/portfolio.py
++++ b/codes/portfolio.py
+@@ -560,3 +560,96 @@ def run_simulation(portfolio_name: str) -> dict:
+ def invalidate_simulation_cache(portfolio_name: str) -> None:
+     """Call whenever holdings change so next run fetches fresh data."""
+     cache.clear("port_sim", portfolio_name)
++
++
++# ══════════════════════════════════════════════════════════════════════════════
++# Multi-Portfolio Comparison (PROJECT_MAP.md — Portfolio Page Refactor)
++# ══════════════════════════════════════════════════════════════════════════════
++
++def _weak_link_score(portfolio: dict, backtest: dict) -> float:
++    """
++    0-100 score where 100 = no weak-link holdings.
++    Reuses analyze_weak_links() without modifying it.
++    """
++    wl = analyze_weak_links(portfolio, backtest)
++    if wl.get("error"):
++        return 50.0
++    holdings = wl.get("holdings", {})
++    if not holdings:
++        return 50.0
++    n_weak = sum(1 for h in holdings.values() if h["verdict"] == "weak link")
++    return round((1 - n_weak / len(holdings)) * 100, 2)
++
++
++def compare_portfolios(portfolio_a_name: str, portfolio_b_name: str) -> dict:
++    """
++    Compare two portfolios for the Portfolio Page comparison view.
++
++    Reuses run_simulation() (cached backtest + Monte Carlo) and
++    analyze_weak_links() for both portfolios — does not re-implement or
++    alter any existing simulation logic.
++
++    score = (cagr * 0.40) + (alpha_vs_spy * 0.25)
++          + (normalized_final_value * 0.15) + (normalized_p50 * 0.15)
++          + (weak_link_score * 0.05)
++
++    Returns:
++      {
++        "winner": str | None,        # None if scores are nearly identical
++        "score_a": float,
++        "score_b": float,
++        "reasons": [str, ...],
++        "portfolio_a": {...},         # run_simulation() result for A
++        "portfolio_b": {...},         # run_simulation() result for B
++        "error": str | None,
++      }
++    """
++    sim_a = run_simulation(portfolio_a_name)
++    sim_b = run_simulation(portfolio_b_name)
++
++    if sim_a.get("error"):
++        return {"error": sim_a["error"]}
++    if sim_b.get("error"):
++        return {"error": sim_b["error"]}
++
++    bt_a, mc_a = sim_a["backtest"], sim_a["montecarlo"]
++    bt_b, mc_b = sim_b["backtest"], sim_b["montecarlo"]
++
++    if bt_a.get("error") or bt_b.get("error"):
++        return {"error": "Backtest unavailable for one or both portfolios"}
++
++    cagr_a, cagr_b = bt_a["cagr"], bt_b["cagr"]
++    alpha_a = cagr_a - bt_a["spy_cagr"]
++    alpha_b = cagr_b - bt_b["spy_cagr"]
++
++    final_a, final_b = bt_a["final_value"], bt_b["final_value"]
++    max_final = max(final_a, final_b, 1e-9)
++    norm_final_a = final_a / max_final * 100
++    norm_final_b = final_b / max_final * 100
++
++    p50_a = mc_a["p50"][-1] if not mc_a.get("error") and mc_a.get("p50") else None
++    p50_b = mc_b["p50"][-1] if not mc_b.get("error") and mc_b.get("p50") else None
++    if p50_a is not None and p50_b is not None:
++        max_p50 = max(p50_a, p50_b, 1e-9)
++        norm_p50_a = p50_a / max_p50 * 100
++        norm_p50_b = p50_b / max_p50 * 100
++    else:
++        norm_p50_a = norm_p50_b = 50.0
++
++    p_a = load_portfolio(portfolio_a_name)
++    p_b = load_portfolio(portfolio_b_name)
++    wl_score_a = _weak_link_score(p_a, bt_a) if p_a else 50.0
++    wl_score_b = _weak_link_score(p_b, bt_b) if p_b else 50.0
++
++    def _composite(cagr, alpha, norm_final, norm_p50, wl_score):
++        return (
++            cagr * 0.40
++            + alpha * 0.25
++            + norm_final * 0.15
++            + norm_p50 * 0.15
++            + wl_score * 0.05
++        )
++
++    score_a = _composite(cagr_a, alpha_a, norm_final_a, norm_p50_a, wl_score_a)
++    score_b = _composite(cagr_b, alpha_b, norm_final_b, norm_p50_b, wl_score_b)
++
++    reasons: list[str] = []
++    if abs(score_a - score_b) < 1.0:
++        winner = None
++        reasons = ["Both portfolios perform similarly."]
++    elif score_a > score_b:
++        winner = portfolio_a_name
++        if cagr_a > cagr_b:
++            reasons.append("Higher CAGR")
++        if alpha_a > alpha_b:
++            reasons.append("Better alpha vs SPY")
++        if p50_a is not None and p50_b is not None and p50_a > p50_b:
++            reasons.append("Higher projected median value")
++        if wl_score_a > wl_score_b:
++            reasons.append("Fewer weak-link holdings")
++    else:
++        winner = portfolio_b_name
++        if cagr_b > cagr_a:
++            reasons.append("Higher CAGR")
++        if alpha_b > alpha_a:
++            reasons.append("Better alpha vs SPY")
++        if p50_a is not None and p50_b is not None and p50_b > p50_a:
++            reasons.append("Higher projected median value")
++        if wl_score_b > wl_score_a:
++            reasons.append("Fewer weak-link holdings")
++
++    return {
++        "winner":      winner,
++        "score_a":     round(score_a, 2),
++        "score_b":     round(score_b, 2),
++        "reasons":     reasons,
++        "portfolio_a": sim_a,
++        "portfolio_b": sim_b,
++        "error":       None,
++    }
+diff --git a/tests/test_portfolio_comparison.py b/tests/test_portfolio_comparison.py
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/tests/test_portfolio_comparison.py
+@@ -0,0 +1,118 @@
++"""
++Tests for compare_portfolios() — Portfolio Page Refactor (multi-portfolio
++comparison service).
++
++Verifies:
++1. Returns error when either portfolio's simulation errors.
++2. Picks the higher-scoring portfolio as winner with correct reasons.
++3. Returns winner=None with "similar" message when scores are close.
++4. _weak_link_score returns 100 when no holdings are weak links.
++5. _weak_link_score returns neutral 50 on analyze_weak_links error / empty.
++"""
++
++import sys
++import os
++from unittest.mock import patch
++
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
++from codes import portfolio
++
++
++def _sim(cagr, spy_cagr, final_value, p50_last):
++    return {
++        "error": None,
++        "backtest": {
++            "error": None,
++            "cagr": cagr,
++            "spy_cagr": spy_cagr,
++            "final_value": final_value,
++        },
++        "montecarlo": {"error": None, "p50": [final_value, p50_last]},
++        "holdings": {},
++    }
++
++
++class TestCompareePortfoliosErrors:
++    def test_error_from_sim_a_propagates(self):
++        with patch.object(portfolio, "run_simulation",
++                          side_effect=lambda n: {"error": "boom"} if n == "A" else _sim(10, 8, 100, 110)):
++            result = portfolio.compare_portfolios("A", "B")
++        assert result["error"] == "boom"
++
++    def test_error_from_sim_b_propagates(self):
++        with patch.object(portfolio, "run_simulation",
++                          side_effect=lambda n: _sim(10, 8, 100, 110) if n == "A" else {"error": "boom"}):
++            result = portfolio.compare_portfolios("A", "B")
++        assert result["error"] == "boom"
++
++    def test_backtest_error_returns_error(self):
++        bad = _sim(10, 8, 100, 110)
++        bad["backtest"]["error"] = "no data"
++        with patch.object(portfolio, "run_simulation",
++                          side_effect=lambda n: bad if n == "A" else _sim(10, 8, 100, 110)):
++            result = portfolio.compare_portfolios("A", "B")
++        assert result["error"] is not None
++
++
++class TestCompareePortfoliosWinner:
++    def _run(self, sim_a, sim_b):
++        with patch.object(portfolio, "run_simulation",
++                          side_effect=lambda n: sim_a if n == "A" else sim_b), \
++             patch.object(portfolio, "load_portfolio", return_value={"holdings": {}}), \
++             patch.object(portfolio, "_weak_link_score", return_value=100.0):
++            return portfolio.compare_portfolios("A", "B")
++
++    def test_higher_cagr_wins(self):
++        sim_a = _sim(cagr=20, spy_cagr=8, final_value=150, p50_last=160)
++        sim_b = _sim(cagr=5,  spy_cagr=8, final_value=100, p50_last=105)
++        result = self._run(sim_a, sim_b)
++        assert result["winner"] == "A"
++        assert "Higher CAGR" in result["reasons"]
++        assert result["score_a"] > result["score_b"]
++
++    def test_lower_score_portfolio_b_wins(self):
++        sim_a = _sim(cagr=2, spy_cagr=8, final_value=80, p50_last=85)
++        sim_b = _sim(cagr=18, spy_cagr=8, final_value=140, p50_last=150)
++        result = self._run(sim_a, sim_b)
++        assert result["winner"] == "B"
++        assert "Higher CAGR" in result["reasons"]
++
++    def test_near_identical_scores_no_winner(self):
++        sim_a = _sim(cagr=10, spy_cagr=8, final_value=100, p50_last=110)
++        sim_b = _sim(cagr=10, spy_cagr=8, final_value=100, p50_last=110)
++        result = self._run(sim_a, sim_b)
++        assert result["winner"] is None
++        assert result["reasons"] == ["Both portfolios perform similarly."]
++
++    def test_result_includes_simulation_payloads(self):
++        sim_a = _sim(cagr=10, spy_cagr=8, final_value=100, p50_last=110)
++        sim_b = _sim(cagr=5,  spy_cagr=8, final_value=90,  p50_last=95)
++        result = self._run(sim_a, sim_b)
++        assert result["portfolio_a"] == sim_a
++        assert result["portfolio_b"] == sim_b
++
++
++class TestWeakLinkScore:
++    def test_no_weak_links_gives_100(self):
++        wl = {"error": None, "holdings": {
++            "AAA": {"verdict": "contributor"},
++            "BBB": {"verdict": "neutral"},
++        }}
++        with patch.object(portfolio, "analyze_weak_links", return_value=wl):
++            score = portfolio._weak_link_score({"holdings": {}}, {})
++        assert score == 100.0
++
++    def test_some_weak_links_reduces_score(self):
++        wl = {"error": None, "holdings": {
++            "AAA": {"verdict": "weak link"},
++            "BBB": {"verdict": "neutral"},
++        }}
++        with patch.object(portfolio, "analyze_weak_links", return_value=wl):
++            score = portfolio._weak_link_score({"holdings": {}}, {})
++        assert score == 50.0
++
++    def test_error_gives_neutral_50(self):
++        with patch.object(portfolio, "analyze_weak_links", return_value={"error": "x"}):
++            score = portfolio._weak_link_score({"holdings": {}}, {})
++        assert score == 50.0
++
++    def test_empty_holdings_gives_neutral_50(self):
++        with patch.object(portfolio, "analyze_weak_links", return_value={"error": None, "holdings": {}}):
++            score = portfolio._weak_link_score({"holdings": {}}, {})
++        assert score == 50.0

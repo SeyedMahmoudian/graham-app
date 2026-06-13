@@ -227,7 +227,7 @@ Acceptance Criteria:
 
 ## ISSUE-002
 
-Status: []
+Status: [closed]
 
 Title: scrolling in tabs needs to be independent 
 
