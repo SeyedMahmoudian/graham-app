@@ -240,21 +240,21 @@ Acceptance Criteria:
 
 ## ISSUE-003
 
-Status: [closed]
+Status: []
 
-Title: touch is not working in mobile
+Title: constant refresh
 
-Priority: Low
+Priority: high
 
-Files: app.py
+Files: 
 
-* 
+* app.py
 
 Problem:
-*  in mobile view when clicking on ticker symbol nothin happens, the touch functino does not get triggered
+*  the app in very slow, it is constantly refreshing itself , issue seems to be from never ending table
 
 Acceptance Criteria:
-* be able to use touch to click on symbol and get analyze tab
+* keep never ending table but stop refreshing all the time
 
 ---
 
