@@ -68,6 +68,25 @@ app.index_string = app.index_string.replace(
 app.index_string = app.index_string.replace(
     '</head>',
     '<script>'
+    '(function(){'
+    '  let savedScroll = 0;'
+    '  window.addEventListener("orientationchange", function(){'
+    '    savedScroll = window.scrollY;'
+    '  });'
+    '  window.addEventListener("resize", function(){'
+    '    if (savedScroll > 0) {'
+    '      requestAnimationFrame(function(){'
+    '        window.scrollTo(0, savedScroll);'
+    '      });'
+    '    }'
+    '  });'
+    '})();'
+    '</script></head>'
+)
+
+app.index_string = app.index_string.replace(
+    '</head>',
+    '<script>'
     'const APP_VERSION = "v3.1";'  # bump this on each deploy
     'if (localStorage.getItem("app_version") !== APP_VERSION) {'
     '    localStorage.setItem("app_version", APP_VERSION);'
