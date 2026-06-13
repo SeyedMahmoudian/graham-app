@@ -7,6 +7,7 @@ import traceback
 import sys
 import os
 from data import api_fetcher
+from data.api_fetcher import RateLimitError
 # Allow both `python app.py` (direct) and `python -m codes.app` (module) execution.
 # Inserts the project root so that `codes.*` package imports resolve in both cases.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -196,7 +197,12 @@ def analyze_stock(symbol: str) -> dict:
     # Quality score (no price) — early calculation
     q = quality.score(sec_facts)
     # Now try to get price
-    price = api_fetcher.get_price(symbol)
+    try:
+        price = api_fetcher.get_price(symbol)
+    except RateLimitError as e:
+        # Surface hard rate-limit blocks to the UI via the existing
+        # status-msg error path (run_analysis renders result["error"]).
+        return {"error": str(e)}
     # Earnings revision score
     earnings_revision_result = {"total_score": 0, "total_max": 100, "criteria": []}
     if price:
