@@ -2963,6 +2963,38 @@ def run_simulation(n, active, compare):
         *_build_sim_charts(active, PALETTE[0]),
     ]
     if compare and compare != active:
+        cmp_result = portfolio_engine.compare_portfolios(active, compare)
+        if cmp_result.get("error"):
+            sections.append(html.Div(
+                f"⚠️ Comparison unavailable: {cmp_result['error']}",
+                style={"color": MUTED, "fontSize": "13px",
+                       "padding": "8px 4px", "marginTop": "16px"}
+            ))
+        else:
+            winner  = cmp_result.get("winner")
+            score_a = cmp_result.get("score_a", 0)
+            score_b = cmp_result.get("score_b", 0)
+            reasons = cmp_result.get("reasons", [])
+            if winner:
+                title, title_color = f"🏆 {winner} is stronger", GREEN
+            else:
+                title, title_color = "Both portfolios perform similarly.", MUTED
+            sections.append(html.Div(className="scorecard", style={
+                "marginTop": "24px", "border": f"1px solid {title_color}",
+            }, children=[
+                html.Div(title, style={
+                    "fontSize": "15px", "fontWeight": "700",
+                    "color": title_color, "padding": "14px 18px 6px",
+                }),
+                html.Div([
+                    html.Span(f"{active}: {score_a:.1f}", style={"marginRight": "16px"}),
+                    html.Span(f"{compare}: {score_b:.1f}"),
+                ], style={"fontSize": "13px", "color": MUTED, "padding": "0 18px 8px"}),
+                html.Ul([
+                    html.Li(r, style={"fontSize": "12px", "color": TEXT})
+                    for r in reasons
+                ], style={"padding": "0 18px 14px 34px", "margin": 0}),
+            ]))
         sections += [
             html.Div(f"📊 {compare} (comparison)",
                      className="scorecard-header",
