@@ -2695,6 +2695,339 @@ def update_shares(n_clicks_list, values, ids, refresh):
     portfolio_engine.invalidate_simulation_cache(port_name)
     return (refresh or 0) + 1, f"✅ {symbol} updated to {new_shares} shares."
 
+# ── Side-by-side portfolio comparison helpers ─────────────────────────────────
+def _two_col(left, right) -> html.Div:
+    """Responsive 2-column flex row; stacks on narrow/mobile viewports."""
+    col_style = {"flex": "1 1 320px", "minWidth": "0"}
+    return html.Div(
+        style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "alignItems": "flex-start"},
+        children=[
+            html.Div(left,  style=col_style),
+            html.Div(right, style=col_style),
+        ],
+    )
+
+
+def _comparison_stats_row(port_name: str, bt: dict) -> html.Div:
+    """Single-portfolio summary stats row (reused for side-by-side display)."""
+    if bt.get("error"):
+        return html.Div(f"❌ {bt['error']}", className="text-danger")
+
+    def _delta(val, ref):
+        d = val - ref
+        c = GREEN if d >= 0 else RED
+        sign = "+" if d >= 0 else ""
+        return html.Span(f" ({sign}${d:,.0f})", style={"color": c, "fontSize": "12px"})
+
+    return html.Div(className="portfolio-stats-row", children=[
+        html.Div(className="stat-item", children=[
+            html.Div("Invested", className="stat-label"),
+            html.Div(f"${bt['total_invested']:,.2f}", className="stat-value"),
+        ]),
+        html.Div(className="stat-item", children=[
+            html.Div("Portfolio Value", className="stat-label"),
+            html.Div([
+                html.Span(f"${bt['final_value']:,.2f}", className="stat-value"),
+                _delta(bt["final_value"], bt["total_invested"]),
+            ]),
+        ]),
+        html.Div(className="stat-item", children=[
+            html.Div("SPY (same $)", className="stat-label"),
+            html.Div([
+                html.Span(f"${bt['final_spy']:,.2f}", className="stat-value"),
+                _delta(bt["final_spy"], bt["spy_invested"]),
+            ]),
+        ]),
+        html.Div(className="stat-item", children=[
+            html.Div("Portfolio CAGR", className="stat-label"),
+            html.Div(f"{bt['cagr']:+.1f}%", className="stat-value",
+                     style={"color": GREEN if bt["cagr"] > 0 else RED}),
+        ]),
+        html.Div(className="stat-item", children=[
+            html.Div("SPY CAGR", className="stat-label"),
+            html.Div(f"{bt['spy_cagr']:+.1f}%", className="stat-value",
+                     style={"color": GREEN if bt["spy_cagr"] > 0 else RED}),
+        ]),
+        html.Div(className="stat-item", children=[
+            html.Div("vs SPY", className="stat-label"),
+            html.Div(f"{bt['cagr'] - bt['spy_cagr']:+.1f}% / yr", className="stat-value",
+                     style={"color": GREEN if bt["cagr"] > bt["spy_cagr"] else RED}),
+        ]),
+    ])
+
+
+def _comparison_holdings_table(bt: dict) -> html.Div:
+    """Holdings detail table (reused for side-by-side display)."""
+    if bt.get("error") or not bt.get("holdings_detail"):
+        return html.Div()
+    detail_rows = []
+    for sym, d in bt["holdings_detail"].items():
+        gain_color = GREEN if d["gain_pct"] >= 0 else RED
+        factor = d.get("split_factor", 1.0)
+        orig   = d.get("original_shares", d["shares"])
+        if factor and factor != 1.0 and orig:
+            split_label = f"÷{1/factor:.0f}" if factor < 1 else f"×{factor:.4g}"
+            shares_cell = html.Td([
+                str(d["shares"]),
+                html.Span(
+                    f" (split {split_label})",
+                    style={"fontSize": "11px", "color": AMBER, "marginLeft": "4px"}
+                ),
+            ])
+        else:
+            shares_cell = html.Td(str(d["shares"]))
+        detail_rows.append(html.Tr([
+            html.Td(sym, className="font-semibold text-info"),
+            shares_cell,
+            html.Td(f"${d['entry_price']:.2f}"),
+            html.Td(f"${d['current_price']:.2f}"),
+            html.Td(f"${d['current_value']:,.2f}"),
+            html.Td(f"{d['gain_pct']:+.1f}%", style={"color": gain_color}),
+        ]))
+    return html.Div(className="scorecard", children=[
+        html.Div("Holdings Performance (10yr backtest period)", className="scorecard-header"),
+        html.Table(className="screener-table", children=[
+            html.Thead(html.Tr([
+                html.Th("Ticker"), html.Th("Shares"),
+                html.Th("Entry Price"), html.Th("Exit Price"),
+                html.Th("Value"), html.Th("Total Return"),
+            ])),
+            html.Tbody(detail_rows),
+        ]),
+    ])
+
+
+def _comparison_weak_link_card(port_name: str, bt: dict) -> html.Div:
+    """Weak-link analysis card (reused for side-by-side display)."""
+    if bt.get("error"):
+        return html.Div()
+    p_obj = portfolio_engine.load_portfolio(port_name)
+    if not p_obj:
+        return html.Div()
+    wl = portfolio_engine.analyze_weak_links(p_obj, bt)
+    if wl.get("error"):
+        return html.Div(
+            f"⚠️  Weak-link analysis unavailable: {wl['error']}",
+            style={"color": MUTED, "fontSize": "13px", "padding": "8px 4px"}
+        )
+    gap      = wl["gap_cagr"]
+    gap_col  = GREEN if gap >= 0 else RED
+    gap_text = (
+        f"Portfolio CAGR {wl['port_cagr']:+.1f}%  vs  "
+        f"SPY {wl['spy_cagr']:+.1f}%  —  {gap:+.2f}% / yr gap "
+        f"over {wl['n_years']:.1f} yr"
+    )
+    if wl.get("weakest"):
+        ws  = wl["weakest"]
+        wd  = wl["holdings"][ws]
+        banner = html.Div(
+            f"⚠️  Weakest link: {ws} — "
+            f"replacing it with SPY would have improved total returns "
+            f"by +{wd['swap_delta_pct']:.2f}%",
+            style={
+                "background": "rgba(239,83,80,0.10)",
+                "border": f"1px solid {RED}",
+                "borderRadius": "6px",
+                "padding": "8px 14px",
+                "marginBottom": "12px",
+                "color": RED,
+                "fontSize": "13px",
+                "fontWeight": "600",
+            }
+        )
+    else:
+        banner = html.Div(
+            "✅  No weak links — every holding beat SPY over the backtest period.",
+            style={
+                "background": "rgba(102,187,106,0.10)",
+                "border": f"1px solid {GREEN}",
+                "borderRadius": "6px",
+                "padding": "8px 14px",
+                "marginBottom": "12px",
+                "color": GREEN,
+                "fontSize": "13px",
+                "fontWeight": "600",
+            }
+        )
+    wl_rows = []
+    for sym in wl["ranking"]:
+        d       = wl["holdings"][sym]
+        verdict = d["verdict"]
+        v_col   = (RED   if verdict == "weak link"   else
+                   GREEN if verdict == "contributor" else MUTED)
+        v_icon  = ("⚠️"  if verdict == "weak link"   else
+                   "✅" if verdict == "contributor" else "—")
+        wl_rows.append(html.Tr([
+            html.Td(sym, className="font-semibold text-info"),
+            html.Td(f"{d['weight']:.1f}%"),
+            html.Td(f"{d['stock_cagr']:+.1f}%",
+                    style={"color": GREEN if d["stock_cagr"] >= 0 else RED}),
+            html.Td(f"{d['cagr_vs_spy']:+.1f}%",
+                    style={"color": GREEN if d["cagr_vs_spy"] >= 0 else RED}),
+            html.Td(f"{d['drag_bps']:+.1f}",
+                    style={"color": GREEN if d["drag_bps"] >= 0 else RED}),
+            html.Td(f"{d['swap_delta_pct']:+.2f}%",
+                    style={"color": GREEN if d["swap_delta_pct"] <= 0 else RED}),
+            html.Td(f"{v_icon} {verdict}", style={"color": v_col, "fontWeight": "600"}),
+        ]))
+    return html.Div(className="scorecard", children=[
+        html.Div("🔍 Weak Link Analysis", className="scorecard-header"),
+        html.Div(gap_text, style={
+            "color": gap_col, "fontSize": "13px",
+            "marginBottom": "14px", "padding": "0 4px",
+        }),
+        banner,
+        html.Table(className="screener-table", children=[
+            html.Thead(html.Tr([
+                html.Th("Ticker"), html.Th("Weight"), html.Th("Stock CAGR"),
+                html.Th("vs SPY"), html.Th("Drag (bps)"), html.Th("Swap Δ"),
+                html.Th("Verdict"),
+            ])),
+            html.Tbody(wl_rows),
+        ]),
+        html.Div(
+            "Table sorted worst-to-best.  "
+            "Drag (bps): weighted annualised underperformance vs SPY (negative = drag).  "
+            "Swap Δ: total-return change if this stock were replaced with SPY "
+            "(positive = stock was a drag; negative = stock beat SPY).",
+            style={
+                "fontSize": "11px", "color": MUTED,
+                "marginTop": "10px", "padding": "0 4px",
+                "lineHeight": "1.6",
+            }
+        ),
+    ])
+
+
+def _build_comparison_view(active: str, compare: str, cmp_result: dict, palette: list) -> list:
+    """
+    Side-by-side comparison view: winner banner + 2-column layout for
+    stats, combined backtest/Monte Carlo charts, holdings, and weak-link
+    analysis. Reuses run_simulation()/analyze_weak_links() results from
+    compare_portfolios() — no simulation logic is re-implemented.
+    """
+    sections = []
+
+    # ── Winner banner ────────────────────────────────────────────────────
+    winner  = cmp_result.get("winner")
+    score_a = cmp_result.get("score_a", 0)
+    score_b = cmp_result.get("score_b", 0)
+    reasons = cmp_result.get("reasons", [])
+    if winner:
+        title, title_color = f"🏆 {winner} is stronger", GREEN
+    else:
+        title, title_color = "Both portfolios perform similarly.", MUTED
+    sections.append(html.Div(className="scorecard", style={
+        "marginTop": "24px", "border": f"1px solid {title_color}",
+    }, children=[
+        html.Div(title, style={
+            "fontSize": "15px", "fontWeight": "700",
+            "color": title_color, "padding": "14px 18px 6px",
+        }),
+        html.Div([
+            html.Span(f"{active}: {score_a:.1f}", style={"marginRight": "16px"}),
+            html.Span(f"{compare}: {score_b:.1f}"),
+        ], style={"fontSize": "13px", "color": MUTED, "padding": "0 18px 8px"}),
+        html.Ul([
+            html.Li(r, style={"fontSize": "12px", "color": TEXT})
+            for r in reasons
+        ], style={"padding": "0 18px 14px 34px", "margin": 0}),
+    ]))
+
+    sim_a = cmp_result["portfolio_a"]
+    sim_b = cmp_result["portfolio_b"]
+    bt_a, mc_a = sim_a["backtest"], sim_a["montecarlo"]
+    bt_b, mc_b = sim_b["backtest"], sim_b["montecarlo"]
+    color_a, color_b = palette[0], palette[1]
+
+    # ── Column headers ───────────────────────────────────────────────────
+    sections.append(_two_col(
+        html.Div(f"📊 {active}", className="scorecard-header",
+                 style={"fontSize": "16px", "color": color_a}),
+        html.Div(f"📊 {compare}", className="scorecard-header",
+                 style={"fontSize": "16px", "color": color_b}),
+    ))
+
+    # ── Side-by-side stats ───────────────────────────────────────────────
+    sections.append(_two_col(
+        _comparison_stats_row(active, bt_a),
+        _comparison_stats_row(compare, bt_b),
+    ))
+
+    # ── Combined backtest chart (A + B + single SPY line) ───────────────
+    if not bt_a.get("error") and not bt_b.get("error"):
+        fig_bt = go.Figure()
+        fig_bt.add_trace(go.Scatter(
+            x=bt_a["dates"], y=bt_a["portfolio_value"],
+            name=active, line=dict(color=color_a, width=2.5)
+        ))
+        fig_bt.add_trace(go.Scatter(
+            x=bt_b["dates"], y=bt_b["portfolio_value"],
+            name=compare, line=dict(color=color_b, width=2.5)
+        ))
+        fig_bt.add_trace(go.Scatter(
+            x=bt_a["dates"], y=bt_a["spy_value"],
+            name="SPY", line=dict(color=MUTED, width=1.5, dash="dot")
+        ))
+        fig_bt.update_layout(**_chart_layout(
+            f"{active} vs {compare} vs SPY — 10yr Backtest (actual $)", many_traces=True
+        ))
+        fig_bt.update_yaxes(title_text="Portfolio Value ($)", tickprefix="$")
+        sections.append(dcc.Graph(figure=fig_bt, config={"displayModeBar": False}))
+    elif bt_a.get("error"):
+        sections.append(html.Div(f"❌ {active}: {bt_a['error']}", className="text-danger"))
+    elif bt_b.get("error"):
+        sections.append(html.Div(f"❌ {compare}: {bt_b['error']}", className="text-danger"))
+
+    # ── Combined Monte Carlo chart (A + B medians/bands + single SPY band) ──
+    if not mc_a.get("error") and not mc_b.get("error"):
+        fig_mc = go.Figure()
+        # SPY band (grey) — from portfolio A's projection (same SPY series)
+        fig_mc.add_trace(go.Scatter(
+            x=mc_a["dates"] + mc_a["dates"][::-1],
+            y=mc_a["spy_p90"] + mc_a["spy_p10"][::-1],
+            fill="toself", fillcolor="rgba(158,158,158,0.12)",
+            line=dict(color="rgba(0,0,0,0)"), name="SPY range", showlegend=True,
+        ))
+        fig_mc.add_trace(go.Scatter(
+            x=mc_a["dates"], y=mc_a["spy_p50"],
+            name="SPY median", line=dict(color=MUTED, width=1.5, dash="dot")
+        ))
+        for mc, name, color in ((mc_a, active, color_a), (mc_b, compare, color_b)):
+            r, g_c, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+            fill_rgba = f"rgba({r},{g_c},{b},0.12)"
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"] + mc["dates"][::-1],
+                y=mc["p90"] + mc["p10"][::-1],
+                fill="toself", fillcolor=fill_rgba,
+                line=dict(color="rgba(0,0,0,0)"), name=f"{name} range",
+            ))
+            fig_mc.add_trace(go.Scatter(
+                x=mc["dates"], y=mc["p50"],
+                name=f"{name} median", line=dict(color=color, width=2.5)
+            ))
+        fig_mc.update_layout(**_chart_layout(
+            f"{active} vs {compare} vs SPY — 2yr Monte Carlo Projection (1,000 paths)",
+            many_traces=True
+        ))
+        fig_mc.update_yaxes(title_text="Projected Value ($)", tickprefix="$")
+        sections.append(dcc.Graph(figure=fig_mc, config={"displayModeBar": False}))
+
+    # ── Side-by-side holdings tables ─────────────────────────────────────
+    sections.append(_two_col(
+        _comparison_holdings_table(bt_a),
+        _comparison_holdings_table(bt_b),
+    ))
+
+    # ── Side-by-side weak-link analysis ──────────────────────────────────
+    sections.append(_two_col(
+        _comparison_weak_link_card(active, bt_a),
+        _comparison_weak_link_card(compare, bt_b),
+    ))
+
+    return sections
+
+
 # ── Run simulation ────────────────────────────────────────────────────────────
 @callback(
     Output("portfolio-sim-results", "children"),

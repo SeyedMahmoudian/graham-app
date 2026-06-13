@@ -8,3 +8,4 @@ gunicorn
 alpha_vantage
 lxml
 finnhub-python
+gunicorn

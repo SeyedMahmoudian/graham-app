@@ -88,9 +88,6 @@ sec_data.py, regime.py, risk_metrics.py, portfolio.py
 
 P5 INFRASTRUCTURE UPGRADES
 ===
-2. UX update:
-- make the table in screener scrolls indefently, at the end of the table load extra 10 row
-- when we switch from one tab to other memorize the location we were in previous tab instead of just placing the client at random position
 
 3. MOBILE UX:
 - stat labels expandable on tap
