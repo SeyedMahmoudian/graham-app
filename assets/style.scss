@@ -924,7 +924,10 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 
-
+  @include media.md-laptop {
+    display:flex;
+    flex-direction: row;
+  }
   @media (max-width: 767px) {
     grid-template-columns: 1fr;
   }
@@ -1012,6 +1015,11 @@ body {
   max-width: 672px;
   max-height: 500px;
   margin-bottom: 2rem;
+  @include media.md-laptop {
+    width: 555px;
+    max-width: 555px;
+    flex:1 1 50%;
+  }
 }
 
 ._dash-loading-callback {

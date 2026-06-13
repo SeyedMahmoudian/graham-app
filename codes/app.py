@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import functools
 from codes.data   import cache, sec_data
-from codes.models import graham, quality, momentum, piotroski, altman, risk_metrics, greenblatt, buffett, earnings_revision, profitability as profitability_model, fcf_quality as fcf_quality_model, capital_allocation as capital_allocation_model, growth_quality as growth_quality_model, regime as regime_model, insider_activity as insider_activity_model, factor_momentum as factor_momentum_model, alternative_data as alternative_data_model
+from codes.models import graham, quality, momentum, piotroski, altman, risk_metrics, greenblatt, buffett, earnings_revision, profitability as profitability_model, fcf_quality as fcf_quality_model, capital_allocation as capital_allocation_model, growth_quality as growth_quality_model, regime as regime_model, insider_activity as insider_activity_model, factor_momentum as factor_momentum_model, alternative_data as alternative_data_model,options_signal_engine as options_signal_model
 from codes.engine import scorer, screener, universe
 import codes.portfolio as portfolio_engine
 # ── App Init ──────────────────────────────────────────────────────────────────
@@ -311,6 +311,15 @@ def analyze_stock(symbol: str) -> dict:
     regime_overlay = scorer.apply_regime_overlay(
         enhanced.get("composite_score", 0), regime_result
     )
+    # Options Signal (P4) — depends on regime + risk + price history
+    options_signal_result = None
+    try:
+        options_signal_result = options_signal_model.get_options_signal(
+            symbol, price_hist=hist, regime_result=regime_result,
+            risk_result=risk_result, current_price=price,
+        )
+    except Exception as e:
+        print(f"Options signal calculation failed: {e}")
     # Market cap for persistence/screener ordering.
     # Prefer graham.score()'s value (price × shares, $M); if unavailable
     # (no live price), fall back to live price (Tiingo/Finnhub via
@@ -351,6 +360,7 @@ def analyze_stock(symbol: str) -> dict:
         "regime":             regime_result,
         "regime_overlay":     regime_overlay,
         "enhanced":    enhanced,
+        "options_signal":     options_signal_result,
         # ─────────────────────────────────────────────────
         "price_history": hist.to_dict() if hist is not None else None,
         "spy_history": spy_hist.to_dict() if spy_hist is not None else None,
@@ -1140,7 +1150,75 @@ def _fcf_quality_card(data: dict) -> html.Div:
         ]),
         html.Div(metric_rows, className="px-xl pb-2xl"),
     ])
+def _options_signal_card(data: dict) -> html.Div:
+    """Options Signal card: directional bias, IV regime, strike/expiry, risk/edge."""
+    os_data = data.get("options_signal") or {}
+    if not os_data:
+        return html.Div()
 
+    bias   = os_data.get("bias", "NEUTRAL")
+    signal = os_data.get("signal", "NO_TRADE")
+    edge   = os_data.get("edge_score")
+    risk   = os_data.get("risk_score")
+    if edge is None:
+        return html.Div()
+
+    bias_color = {"CALL": GREEN, "PUT": RED, "NEUTRAL": MUTED}.get(bias, MUTED)
+    sig_color = {
+        "BUY_CALL": GREEN, "BUY_PUT": GREEN,
+        "WATCH": AMBER, "AVOID": RED, "NO_TRADE": MUTED,
+    }.get(signal, MUTED)
+
+    def _fmt(v, fmt=".2f", prefix="", suffix=""):
+        if v is None:
+            return "N/A"
+        try:
+            return f"{prefix}{v:{fmt}}{suffix}"
+        except (ValueError, TypeError):
+            return "N/A"
+
+    metrics = [
+        ("Bias",             html.Span(bias, style={"color": bias_color, "fontWeight": "700"})),
+        ("Confidence",       _fmt(os_data.get("bias_confidence"), ".0f", suffix="/100")),
+        ("IV Level",         os_data.get("iv_level", "N/A")),
+        ("IV Trend",         os_data.get("iv_trend", "N/A")),
+        ("Expected Move",    _fmt((os_data.get("expected_move_pct") or 0) * 100, ".1f", suffix="%")),
+        ("Expected Move $",  _fmt(os_data.get("expected_move_dollar"), ",.2f", "$")),
+        ("Suggested Strike", _fmt(os_data.get("recommended_strike"), ",.2f", "$")),
+        ("Expiry (days)",    str(os_data.get("recommended_expiry_days", "N/A"))),
+        ("Risk Score",       _fmt(risk, ".0f", suffix="/100")),
+    ]
+
+    metric_rows = [
+        html.Div(style={
+            "display": "flex", "justifyContent": "space-between",
+            "padding": "4px 0", "borderBottom": f"1px solid {BORDER}",
+            "fontSize": "12px",
+        }, children=[
+            html.Span(lbl, className="text-muted"),
+            html.Span(val) if not isinstance(val, str) else
+            html.Span(val, style={"color": TEXT, "fontWeight": "600"}),
+        ])
+        for lbl, val in metrics
+    ]
+
+    return html.Div(className="scorecard", children=[
+        html.Div(style={"display": "flex", "alignItems": "center",
+                        "gap": "10px", "padding": "14px 18px 10px"}, children=[
+            html.Span("Options Signal",
+                      style={"fontSize": "14px", "fontWeight": "700", "color": TEXT}),
+            html.Span(f"{edge:.0f}/100",
+                      style={"fontSize": "22px", "fontWeight": "800", "color": sig_color}),
+            html.Span(f"— {signal.replace('_', ' ').title()}",
+                      style={"fontSize": "13px", "color": sig_color}),
+        ]),
+        html.Div(
+            "Models short-horizon option mark-to-market movement, not expiry payoff.",
+            style={"fontSize": "11px", "color": MUTED, "padding": "0 18px 8px",
+                   "fontStyle": "italic"},
+        ),
+        html.Div(metric_rows, className="px-xl pb-2xl"),
+    ])
 
 def _capital_allocation_card(data: dict) -> html.Div:
     """Capital Allocation card: key metrics display."""
@@ -1976,8 +2054,8 @@ _stat(
         if p_data and a_data else html.Div(),
         html.Div(className="card-row", children=[fcf_quality_card, regime_card]),
         html.Div(className="card-row", children=[capital_allocation_card, growth_quality_card]),
-        html.Div(className="card-row", children=[factor_momentum_card]),
         html.Div(className="card-row", children=[_insider_activity_card(data), alternative_data_card]),
+        html.Div(className="card-row", children=[factor_momentum_card,_options_signal_card(data)]),
         html.Div(className="charts-grid",children=[_eps_chart(g.get("eps_history", []), symbol), _price_chart(data.get("price_history"), data.get("spy_history"), symbol),])
         )
     
